@@ -3,114 +3,87 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1d4a36">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>Scrabble Camera</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Karla:wght@400;600&display=swap">
 <style>
-  /* Layout: camerabeeld bovenaan (vult de breedte), daaronder het rechtgezette bord en de bediening */
+  /* Minimalistisch: de camera vult het scherm, bovenaan één regel status, onderaan alleen wat je nu nodig hebt */
   :root {
-    --bg: #12241b;           /* donker speltafelgroen */
-    --panel: #1b3428;
-    --fg: #eef0e6;
-    --muted: #a7b8ac;
-    --board: #2f6b4f;
-    --tile: #ead7ad;
-    --tile-fg: #2a2116;
-    --ok: #7fd18b;
-    --warn: #f0c36b;
-    --line: #2c4a3b;
-    --display: "Fraunces", Georgia, serif;
-    --body: "Karla", "Segoe UI", system-ui, sans-serif;
+    --zwart: #000;
+    --glas: rgba(0, 0, 0, 0.55);
+    --wit: #f5f5f2;
+    --grijs: rgba(245, 245, 242, 0.62);
+    --groen: #7fd18b;
+    --oranje: #f0c36b;
+    --letter: -apple-system, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
     color-scheme: dark;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   [hidden] { display: none !important; }
-  html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; }
-  body { padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(12px, env(safe-area-inset-left, 0px)); }
-  main { max-width: 720px; margin: 0 auto; padding-block: 14px 28px; display: grid; gap: 14px; }
+  html, body { margin: 0; height: 100%; background: var(--zwart); color: var(--wit); font: 15px/1.4 var(--letter); overflow: hidden; }
 
-  header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .logo { display: flex; gap: 3px; }
-  .logo span { width: 26px; height: 26px; background: var(--tile); color: var(--tile-fg); border-radius: 3px; display: grid;
-               place-items: center; font: 800 15px var(--display); box-shadow: inset 0 -2px 0 #c9ae74; }
-  #status { font-size: .9rem; padding: 5px 10px; border-radius: 999px; background: var(--panel); color: var(--muted); white-space: nowrap; }
-  #status.ok { color: var(--bg); background: var(--ok); }
-  #status.zoek { color: var(--bg); background: var(--warn); }
-
-  .camera { position: relative; width: 100%; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; }
+  .camera { position: fixed; inset: 0; }
   .camera video, .camera canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
   .camera video { z-index: 0; }
-  .camera canvas { touch-action: none; z-index: 1; }
-  .start { z-index: 2; }
-  .vraag { background: var(--panel); border: 2px solid var(--ok); border-radius: 12px; padding: 12px 14px;
-           display: grid; gap: 10px; text-align: center; }
-  .vraag p { margin: 0; font: 700 1.15rem var(--display); }
-  .vraagknoppen { display: flex; gap: 8px; }
-  .vraagknoppen button { flex: 1; padding: 10px 8px; }
-  .vraagknoppen .ja { background: var(--ok); color: var(--bg); }
-  .start { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 20px; gap: 12px; align-content: center; }
-  .start p { margin: 0; color: var(--muted); max-width: 34ch; }
+  .camera canvas { z-index: 1; touch-action: none; }
 
-  button { font: 600 1rem var(--body); border: 0; border-radius: 10px; padding: 12px 16px; cursor: pointer;
-           background: var(--panel); color: var(--fg); }
-  button.hoofd { background: var(--tile); color: var(--tile-fg); font-size: 1.1rem; padding: 14px 22px; }
-  button[aria-pressed="true"] { background: var(--ok); color: var(--bg); }
-  button:focus-visible { outline: 3px solid var(--warn); outline-offset: 2px; }
-  .knoppen { display: flex; flex-wrap: wrap; gap: 8px; }
-  .knoppen button { flex: 1 1 140px; }
+  #status { position: fixed; z-index: 5; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 50%; transform: translateX(-50%);
+            padding: 6px 14px; border-radius: 999px; background: var(--glas); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            font-size: 13px; color: var(--grijs); white-space: nowrap; }
+  #status::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; background: var(--grijs); }
+  #status.zoek::before { background: var(--oranje); }
+  #status.ok { color: var(--wit); }
+  #status.ok::before { background: var(--groen); }
 
-  .onder { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
-  @media (max-width: 560px) { .onder { grid-template-columns: 1fr; } }
-  .recht { width: 100%; max-width: 100%; aspect-ratio: 1; background: var(--panel); border-radius: 8px; display: block; }
-  h2 { font: 700 1rem var(--display); margin: 0 0 6px; color: var(--muted); }
-  .uitleg { color: var(--muted); font-size: .92rem; line-height: 1.5; margin: 0; }
-  .uitleg b { color: var(--fg); }
-  #fout { color: var(--warn); font-size: .95rem; margin: 0; }
+  .onder { position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; display: grid; justify-items: center; gap: 12px;
+           padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 20px) max(16px, env(safe-area-inset-left, 0px)); }
+
+  button { font: 600 15px var(--letter); color: var(--wit); border: 0; cursor: pointer; border-radius: 999px; padding: 12px 22px;
+           background: var(--glas); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  button:focus-visible { outline: 2px solid var(--wit); outline-offset: 2px; }
+  button.hoofd { background: var(--wit); color: #000; padding: 14px 28px; font-size: 16px; }
+  button.ja { background: var(--groen); color: #000; }
+  button.stil { background: none; backdrop-filter: none; -webkit-backdrop-filter: none; color: var(--grijs); font-weight: 500; padding: 8px 12px; }
+
+  .vraag { display: grid; justify-items: center; gap: 12px; }
+  .vraag p { margin: 0; font-size: 18px; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+  .rij { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  #recht { position: fixed; z-index: 4; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+           width: min(34vw, 180px); height: auto; aspect-ratio: 1; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); background: #111; }
+  #fout { margin: 0; color: var(--oranje); text-align: center; max-width: 34ch; text-shadow: 0 1px 6px rgba(0,0,0,.8); }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <div class="logo" aria-label="Scrabble"><span>S</span><span>C</span><span>R</span><span>A</span><span>B</span><span>B</span><span>L</span><span>E</span></div>
-    <div id="status" role="status">Camera uit</div>
-  </header>
-
   <div class="camera" id="camera">
     <video id="video" playsinline muted></video>
     <canvas id="over"></canvas>
-    <div class="start" id="startvak">
-      <p>Leg je gsm stil boven het bord, met het hele bord in beeld.</p>
-      <button class="hoofd" id="start">Camera starten</button>
-    </div>
   </div>
-  <div class="vraag" id="vraag" hidden>
-    <p>Is dit het bord?</p>
-    <div class="vraagknoppen">
-      <button class="ja" id="ja">Ja</button>
-      <button id="nee">Nee, verder zoeken</button>
-    </div>
-  </div>
-  <p id="fout" hidden></p>
 
-  <div class="knoppen">
-    <button id="opnieuw" disabled>Opnieuw zoeken</button>
-    <button id="hand" aria-pressed="false" disabled>Hoeken zelf aanduiden</button>
-  </div>
+  <div id="status" role="status">Scrabble</div>
+  <canvas id="recht" width="450" height="450" hidden></canvas>
 
   <div class="onder">
-    <div>
-      <h2>Rechtgezet bord</h2>
-      <canvas id="recht" class="recht" width="450" height="450"></canvas>
+    <p id="fout" hidden></p>
+
+    <div id="startvak">
+      <button class="hoofd" id="start">Camera starten</button>
     </div>
-    <div>
-      <h2>Hoe het werkt</h2>
-      <p class="uitleg">De camera zoekt zelf het speelveld van <b>15 × 15</b> vakjes. Vindt hij iets, dan omlijnt hij het in het groen en vraagt hij: <b>Is dit het bord?</b><br><br>
-      Tik op <b>Ja</b> en het bord ligt vast. Tik op <b>Nee</b> en hij zoekt verder, zonder dat stuk nog eens voor te stellen. Lukt het niet, tik dan op <b>Hoeken zelf aanduiden</b> en tik de vier hoeken van het speelveld aan.<br><br>
-      Volgende stap: de letters lezen en de woorden controleren.</p>
+
+    <div class="vraag" id="vraag" hidden>
+      <p>Is dit het bord?</p>
+      <div class="rij">
+        <button class="ja" id="ja">Ja</button>
+        <button id="nee">Nee</button>
+      </div>
+    </div>
+
+    <div class="rij" id="acties" hidden>
+      <button class="stil" id="hand" aria-pressed="false">Zelf aanduiden</button>
+      <button class="stil" id="opnieuw" disabled>Opnieuw zoeken</button>
     </div>
   </div>
-</main>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
