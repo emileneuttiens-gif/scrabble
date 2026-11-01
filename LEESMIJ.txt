@@ -1,0 +1,10 @@
+Scrabble Camera - stap 1
+========================
+Live camera die het Scrabblebord zoekt en rechtzet. Alles gebeurt op je gsm zelf; er wordt niets verstuurd.
+
+Bestanden:
+  index.html      de pagina
+  app.js          het zoeken en rechtzetten van het bord
+  opencv.js       OpenCV (beeldverwerking), Apache 2.0-licentie (zie OPENCV-LICENSE)
+
+Online zetten met GitHub Pages: zie de stappen in de chat.
