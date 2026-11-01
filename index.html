@@ -43,6 +43,12 @@
   .camera video { z-index: 0; }
   .camera canvas { touch-action: none; z-index: 1; }
   .start { z-index: 2; }
+  .vraag { background: var(--panel); border: 2px solid var(--ok); border-radius: 12px; padding: 12px 14px;
+           display: grid; gap: 10px; text-align: center; }
+  .vraag p { margin: 0; font: 700 1.15rem var(--display); }
+  .vraagknoppen { display: flex; gap: 8px; }
+  .vraagknoppen button { flex: 1; padding: 10px 8px; }
+  .vraagknoppen .ja { background: var(--ok); color: var(--bg); }
   .start { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 20px; gap: 12px; align-content: center; }
   .start p { margin: 0; color: var(--muted); max-width: 34ch; }
 
@@ -78,10 +84,17 @@
       <button class="hoofd" id="start">Camera starten</button>
     </div>
   </div>
+  <div class="vraag" id="vraag" hidden>
+    <p>Is dit het bord?</p>
+    <div class="vraagknoppen">
+      <button class="ja" id="ja">Ja</button>
+      <button id="nee">Nee, verder zoeken</button>
+    </div>
+  </div>
   <p id="fout" hidden></p>
 
   <div class="knoppen">
-    <button id="vast" aria-pressed="false" disabled>Bord vastzetten</button>
+    <button id="opnieuw" disabled>Opnieuw zoeken</button>
     <button id="hand" aria-pressed="false" disabled>Hoeken zelf aanduiden</button>
   </div>
 
@@ -92,12 +105,12 @@
     </div>
     <div>
       <h2>Hoe het werkt</h2>
-      <p class="uitleg">De camera zoekt het speelveld van <b>15 × 15</b> vakjes en zet het recht, ook als je schuin filmt. Het groene kader toont wat gevonden is.<br><br>
-      Staat je gsm vast? Tik dan op <b>Bord vastzetten</b>: dan hoeft hij niet meer te zoeken. Vindt hij het bord niet goed, tik dan op <b>Hoeken zelf aanduiden</b> en tik de vier hoeken van het speelveld aan.<br><br>
+      <p class="uitleg">De camera zoekt zelf het speelveld van <b>15 × 15</b> vakjes. Vindt hij iets, dan omlijnt hij het in het groen en vraagt hij: <b>Is dit het bord?</b><br><br>
+      Tik op <b>Ja</b> en het bord ligt vast. Tik op <b>Nee</b> en hij zoekt verder, zonder dat stuk nog eens voor te stellen. Lukt het niet, tik dan op <b>Hoeken zelf aanduiden</b> en tik de vier hoeken van het speelveld aan.<br><br>
       Volgende stap: de letters lezen en de woorden controleren.</p>
     </div>
   </div>
 </main>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

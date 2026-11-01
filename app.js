@@ -1,4 +1,4 @@
-// Scrabble Camera - stap 1: live camera, het speelveld vinden en rechtzetten.
+// Scrabble Camera - stap 1: live camera, zelf het speelveld zoeken, vragen "is dit het bord?" en rechtzetten.
 // Alles gebeurt op het toestel zelf; er wordt niets verstuurd.
 "use strict";
 
@@ -10,8 +10,11 @@ const ZOEK_MS = 250;          // zo vaak zoeken naar het bord
 const $ = id => document.getElementById(id);
 const video = $("video"), over = $("over"), recht = $("recht");
 const werk = document.createElement("canvas");
+const STABIEL_NODIG = 4;      // zoveel keer na elkaar op dezelfde plek gevonden: dan pas vragen
 const st = {
   cvKlaar: false, loopt: false, vast: false, hand: false,
+  vraagt: false,         // de vraag "Is dit het bord?" staat open
+  afgewezen: [],         // kaders waarop "Nee" gezegd werd: niet opnieuw voorstellen
   hoek: null,            // 4 hoeken van het speelveld in videopixels [[x,y] x4]: lb, rb, ro, lo
   geschiedenis: [], stabiel: 0, laatstGezocht: 0, handPunten: [],
 };
@@ -70,7 +73,7 @@ async function start() {
   $("startvak").hidden = true;
   over.width = video.videoWidth; over.height = video.videoHeight;
   $("camera").style.aspectRatio = video.videoWidth + " / " + video.videoHeight;
-  $("vast").disabled = false; $("hand").disabled = false;
+  $("opnieuw").disabled = false; $("hand").disabled = false;
   if (!st.cvKlaar) {
     zetStatus("Rekenhulp laden…", "zoek");
     try { await laadCv(); st.cvKlaar = true; }
@@ -84,7 +87,7 @@ async function start() {
 // ---------------------------------------------------------------- hoofdlus
 function lus(t) {
   if (!st.loopt) return;
-  if (!st.vast && !st.hand && t - st.laatstGezocht > ZOEK_MS) {
+  if (!st.vast && !st.hand && !st.vraagt && t - st.laatstGezocht > ZOEK_MS) {
     st.laatstGezocht = t;
     try { zoekBord(); } catch (e) { console.error(e); }
   }
@@ -148,7 +151,7 @@ function zoekBord() {
   cv.dilate(rand, rand, kern);
   cv.findContours(rand, contouren, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
   const opp = werk.width * werk.height;
-  let beste = null, besteScore = 0;
+  const kandidaten = [];
   for (let i = 0; i < contouren.size(); i++) {
     const c = contouren.get(i);
     const a = cv.contourArea(c);
@@ -159,14 +162,16 @@ function zoekBord() {
         const p = [];
         for (let k = 0; k < 4; k++) p.push([benadering.data32S[2 * k], benadering.data32S[2 * k + 1]]);
         const h = ordenHoeken(p);
-        const sc = rasterScore(grijs, h);
-        if (sc > besteScore) { besteScore = sc; beste = h; }
+        kandidaten.push({ h, sc: rasterScore(grijs, h) });
       }
       benadering.delete();
     }
     c.delete();
   }
   [src, grijs, rand, contouren, hier, kern].forEach(m => m.delete());
+  kandidaten.sort((a, b) => b.sc - a.sc);
+  const goed = kandidaten.find(k => !isAfgewezen(k.h.map(([x, y]) => [x / s, y / s])));
+  const beste = goed ? goed.h : null, besteScore = goed ? goed.sc : 0;
 
   if (!beste || besteScore < 1.6) {
     st.stabiel = 0; st.geschiedenis = [];
@@ -186,7 +191,45 @@ function zoekBord() {
   st.stabiel = sprong < 0.02 * maat ? st.stabiel + 1 : 0;
   st.hoek = gem;
   st.score = besteScore;
-  zetStatus(st.stabiel >= 4 ? "Bord gevonden" : "Bord gevonden, even stil houden…", st.stabiel >= 4 ? "ok" : "zoek");
+  if (st.stabiel >= STABIEL_NODIG) vraag();
+  else zetStatus("Mogelijk bord… even stil houden", "zoek");
+}
+
+function isAfgewezen(h) {
+  // hetzelfde kader als een eerder afgewezen kader (hoeken binnen 6% van de grootte)?
+  return st.afgewezen.some(a => {
+    const maat = Math.hypot(a[2][0] - a[0][0], a[2][1] - a[0][1]);
+    return h.every((p, k) => Math.hypot(p[0] - a[k][0], p[1] - a[k][1]) < 0.06 * maat);
+  });
+}
+
+// ---------------------------------------------------------------- "Is dit het bord?"
+function vraag() {
+  st.vraagt = true;
+  $("vraag").hidden = false;
+  zetStatus("Is dit het bord?", "ok");
+  if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+}
+
+function bevestig() {
+  st.vraagt = false; st.vast = true;
+  $("vraag").hidden = true;
+  zetStatus("Bord vastgezet", "ok");
+}
+
+function wijsAf() {
+  if (st.hoek) st.afgewezen.push(st.hoek);
+  st.vraagt = false; st.hoek = null; st.geschiedenis = []; st.stabiel = 0;
+  $("vraag").hidden = true;
+  zetStatus("Verder zoeken…", "zoek");
+}
+
+function opnieuwZoeken() {
+  st.vast = false; st.vraagt = false; st.hand = false; st.handPunten = [];
+  st.hoek = null; st.geschiedenis = []; st.stabiel = 0; st.afgewezen = [];
+  $("vraag").hidden = true;
+  $("hand").setAttribute("aria-pressed", "false"); $("hand").textContent = "Hoeken zelf aanduiden";
+  zetStatus("Bord zoeken…", "zoek");
 }
 
 // ---------------------------------------------------------------- tekenen
@@ -204,7 +247,7 @@ function teken() {
   }
   if (!st.hoek) return;
   const h = st.hoek;
-  c.strokeStyle = st.vast ? "#7fd18b" : (st.stabiel >= 4 ? "#7fd18b" : "#f0c36b");
+  c.strokeStyle = (st.vast || st.vraagt) ? "#7fd18b" : "#f0c36b";
   c.lineWidth = lijn;
   c.beginPath(); h.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath(); c.stroke();
   // het raster zelf (dunne lijnen), via bilineaire interpolatie tussen de hoeken
@@ -217,7 +260,7 @@ function teken() {
     a = punt(0, u); b = punt(1, u); c.moveTo(...a); c.lineTo(...b);
   }
   c.stroke(); c.globalAlpha = 1;
-  tekenRecht();
+  if (st.vast || st.vraagt) tekenRecht();
 }
 
 function tekenRecht() {
@@ -243,22 +286,18 @@ function tekenRecht() {
 // ---------------------------------------------------------------- knoppen
 $("start").addEventListener("click", start);
 
-$("vast").addEventListener("click", () => {
-  if (!st.vast && !st.hoek) { toonFout("Er is nog geen bord gevonden om vast te zetten."); return; }
-  toonFout("");
-  st.vast = !st.vast;
-  $("vast").setAttribute("aria-pressed", String(st.vast));
-  $("vast").textContent = st.vast ? "Bord staat vast (tik om los te maken)" : "Bord vastzetten";
-  zetStatus(st.vast ? "Bord vastgezet" : "Bord zoeken…", st.vast ? "ok" : "zoek");
-});
+$("opnieuw").addEventListener("click", opnieuwZoeken);
+$("ja").addEventListener("click", bevestig);
+$("nee").addEventListener("click", wijsAf);
 
 $("hand").addEventListener("click", () => {
   st.hand = !st.hand;
   st.handPunten = [];
+  st.vraagt = false; $("vraag").hidden = true;
   $("hand").setAttribute("aria-pressed", String(st.hand));
   $("hand").textContent = st.hand ? "Annuleren" : "Hoeken zelf aanduiden";
   if (st.hand) zetStatus("Tik de 4 hoeken van het speelveld", "zoek");
-  else zetStatus(st.hoek ? "Bord gevonden" : "Bord zoeken…", st.hoek ? "ok" : "zoek");
+  else opnieuwZoeken();
 });
 
 over.addEventListener("pointerdown", e => {
@@ -274,10 +313,9 @@ over.addEventListener("pointerdown", e => {
     st.hoek = ordenHoeken(st.handPunten);
     st.hand = false; st.vast = true; st.handPunten = [];
     $("hand").setAttribute("aria-pressed", "false"); $("hand").textContent = "Hoeken zelf aanduiden";
-    $("vast").setAttribute("aria-pressed", "true"); $("vast").textContent = "Bord staat vast (tik om los te maken)";
     zetStatus("Bord vastgezet", "ok");
   }
 });
 
 // voor het testen: toestand opvragen
-window.scrabbleToestand = () => ({ status: $("status").textContent, hoek: st.hoek, stabiel: st.stabiel, score: st.score, vast: st.vast });
+window.scrabbleToestand = () => ({ status: $("status").textContent, hoek: st.hoek, stabiel: st.stabiel, score: st.score, vast: st.vast, vraagt: st.vraagt, afgewezen: st.afgewezen.length });
