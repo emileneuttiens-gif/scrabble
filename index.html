@@ -67,7 +67,12 @@
   .scherm h1 { margin: 0 0 28px; font-size: 34px; font-weight: 700; letter-spacing: 0.02em; }
   .scherm h2 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
   #spelerLijst { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; gap: 10px; }
-  #spelerLijst li { display: flex; align-items: center; gap: 8px; }
+  #spelerLijst li { display: flex; align-items: center; gap: 6px; position: relative; border-radius: 12px; }
+  #spelerLijst li.sleep { z-index: 2; box-shadow: 0 8px 24px rgba(0,0,0,0.6); background: #111; }
+  .greep { width: 32px; height: 44px; display: grid; place-items: center; color: var(--grijs); cursor: grab;
+           touch-action: none; user-select: none; -webkit-user-select: none; font-size: 18px; letter-spacing: -2px; }
+  li.sleep .greep { cursor: grabbing; color: var(--wit); }
+  .uitleg { margin: -10px 0 0; font-size: 13px; color: var(--grijs); text-align: center; }
   #spelerLijst input { flex: 1; min-width: 0; font: 16px var(--letter); color: var(--wit); background: rgba(255,255,255,0.08);
                        border: 1px solid rgba(255,255,255,0.14); border-radius: 12px; padding: 12px 14px; outline: none; }
   #spelerLijst input:focus { border-color: var(--groen); }
@@ -90,8 +95,12 @@
     </section>
     <section id="spelersScherm" class="scherm" hidden>
       <h2>Spelers</h2>
+      <p class="uitleg">Sleep om de volgorde te kiezen · bovenaan begint</p>
       <ol id="spelerLijst"></ol>
-      <button class="stil" id="spelerErbij">+ Speler toevoegen</button>
+      <div class="rij">
+        <button class="stil" id="spelerErbij">+ Speler toevoegen</button>
+        <button class="stil" id="schud">Shuffle</button>
+      </div>
       <button class="hoofd" id="begin">Begin</button>
       <button class="stil" id="menuTerug">Terug</button>
     </section>
@@ -129,6 +138,6 @@
   </div>
 <script src="woordenboek.js?v=1"></script>
 <script src="lezer.js?v=2"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

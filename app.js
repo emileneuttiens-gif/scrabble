@@ -995,8 +995,55 @@ function spelerRij(naam) {
   const weg = document.createElement("button");
   weg.className = "weg"; weg.type = "button"; weg.textContent = "×"; weg.setAttribute("aria-label", "Speler verwijderen");
   weg.addEventListener("click", () => { li.remove(); werkSpelersBij(); });
-  li.append(inv, weg);
+  const greep = document.createElement("span");
+  greep.className = "greep"; greep.textContent = "⋮⋮"; greep.setAttribute("aria-hidden", "true");
+  greep.addEventListener("pointerdown", e => sleepStart(e, li));
+  li.append(greep, inv, weg);
   return li;
+}
+
+// slepen om de volgorde te kiezen (werkt met vinger en muis)
+function sleepStart(e, li) {
+  e.preventDefault();
+  const greep = e.currentTarget;
+  greep.setPointerCapture(e.pointerId);
+  const startY = e.clientY, startTop = li.offsetTop;
+  li.classList.add("sleep");
+  const beweeg = ev => {
+    li.style.transform = `translateY(${ev.clientY - startY + startTop - li.offsetTop}px)`;
+    const midden = el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
+    const vorige = li.previousElementSibling, volgende = li.nextElementSibling;
+    if (vorige && ev.clientY < midden(vorige)) li.parentNode.insertBefore(li, vorige);
+    else if (volgende && ev.clientY > midden(volgende)) li.parentNode.insertBefore(volgende, li);
+    li.style.transform = `translateY(${ev.clientY - startY + startTop - li.offsetTop}px)`;
+  };
+  const stop = () => {
+    li.classList.remove("sleep"); li.style.transform = "";
+    greep.removeEventListener("pointermove", beweeg);
+    greep.removeEventListener("pointerup", stop); greep.removeEventListener("pointercancel", stop);
+    werkSpelersBij();
+  };
+  greep.addEventListener("pointermove", beweeg);
+  greep.addEventListener("pointerup", stop); greep.addEventListener("pointercancel", stop);
+}
+
+function schudSpelers() {
+  const lijst = $("spelerLijst"), rijen = [...lijst.children];
+  const voor = new Map(rijen.map(li => [li, li.getBoundingClientRect().top]));
+  // Fisher-Yates; opnieuw als de volgorde toevallig dezelfde blijft
+  let nieuw;
+  do {
+    nieuw = rijen.slice();
+    for (let i = nieuw.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [nieuw[i], nieuw[j]] = [nieuw[j], nieuw[i]]; }
+  } while (nieuw.length > 1 && nieuw.every((li, i) => li === rijen[i]));
+  nieuw.forEach(li => lijst.appendChild(li));
+  // even zichtbaar laten verschuiven naar de nieuwe plaats
+  nieuw.forEach(li => {
+    const d = voor.get(li) - li.getBoundingClientRect().top;
+    if (!d) return;
+    li.animate([{ transform: `translateY(${d}px)` }, { transform: "translateY(0)" }], { duration: 280, easing: "ease-out" });
+  });
+  werkSpelersBij();
 }
 function werkSpelersBij() {
   const rijen = [...$("spelerLijst").children];
@@ -1020,6 +1067,7 @@ $("spelerErbij").addEventListener("click", () => {
   $("spelerLijst").appendChild(li); werkSpelersBij();
   li.querySelector("input").focus();
 });
+$("schud").addEventListener("click", schudSpelers);
 $("menuTerug").addEventListener("click", () => { $("spelersScherm").hidden = true; $("welkom").hidden = false; });
 $("spelerLijst").addEventListener("keydown", e => {
   if (e.key !== "Enter") return;
