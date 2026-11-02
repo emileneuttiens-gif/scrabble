@@ -30,7 +30,7 @@
 
   #status { position: fixed; z-index: 5; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 50%; transform: translateX(-50%);
             padding: 6px 14px; border-radius: 999px; background: var(--glas); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-            font-size: 13px; color: var(--grijs); white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
+            font-size: 13px; color: var(--grijs); white-space: nowrap; max-width: calc(100vw - 196px); overflow: hidden; text-overflow: ellipsis; }
   #status::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; background: var(--grijs); }
   #status.zoek::before { background: var(--oranje); }
   #status.ok { color: var(--wit); }
@@ -61,6 +61,21 @@
   button.speler { display: flex; gap: 8px; align-items: baseline; padding: 6px 12px; font-size: 13px; font-weight: 500; color: var(--grijs); }
   button.speler b { font-size: 15px; color: var(--wit); font-variant-numeric: tabular-nums; }
   button.speler.aan { color: var(--wit); box-shadow: inset 0 0 0 1.5px var(--groen); }
+  .koppelknop { position: fixed; z-index: 6; top: calc(env(safe-area-inset-top, 0px) + 12px); right: max(12px, env(safe-area-inset-right, 0px));
+                padding: 6px 12px; font-size: 13px; font-weight: 500; color: var(--grijs); }
+  .koppelknop.aan { color: var(--wit); box-shadow: inset 0 0 0 1.5px var(--groen); }
+  .koppelvak { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,0.72); display: grid; place-items: center; padding: 16px; }
+  .koppelkaart { background: #f5f5f2; color: #111; border-radius: 18px; padding: 22px; width: min(100%, 340px); display: grid; gap: 10px; justify-items: center; text-align: center; }
+  .koppelkaart h2 { margin: 0; font-size: 20px; }
+  .koppelkaart p { margin: 0; font-size: 14px; color: #444; }
+  .koppelkaart .qr { width: 220px; height: 220px; }
+  .koppelkaart .qr svg { width: 100%; height: 100%; display: block; }
+  .koppelkaart .code { font-size: 14px; color: #444; }
+  .koppelkaart .code b { font: 600 22px ui-monospace, Menlo, monospace; letter-spacing: 0.12em; color: #111; margin-left: 6px; }
+  .koppelkaart .link { font-size: 11px; color: #777; word-break: break-all; }
+  #koppelStatus.ok { color: #1f7a33; font-weight: 600; }
+  #koppelStatus.fout { color: #b3261e; font-weight: 600; }
+  .koppelkaart button.hoofd { background: #111; color: #fff; width: 100%; }
   #menu { position: fixed; inset: 0; z-index: 10; background: var(--zwart); display: grid; place-items: center;
           padding: max(24px, env(safe-area-inset-top, 0px)) 16px max(24px, env(safe-area-inset-bottom, 0px)); }
   .scherm { display: grid; justify-items: center; gap: 18px; width: min(100%, 340px); }
@@ -112,6 +127,19 @@
 
   <div id="status" role="status" hidden>Scrabble</div>
   <div id="scores" hidden></div>
+  <button id="koppel" class="koppelknop" hidden aria-label="Tweede scherm koppelen">Koppel</button>
+
+  <div id="koppelvak" class="koppelvak" hidden role="dialog" aria-labelledby="koppelTitel">
+    <div class="koppelkaart">
+      <h2 id="koppelTitel">Tweede scherm</h2>
+      <p>Scan met een andere gsm of tablet. Die toont dan de stand groot, en je kan er de jokervraag beantwoorden.</p>
+      <div id="koppelQr" class="qr"></div>
+      <div class="code">Code <b id="koppelCode"></b></div>
+      <p id="koppelStatus"></p>
+      <p class="link" id="koppelLink"></p>
+      <button class="hoofd" id="koppelSluit">Klaar</button>
+    </div>
+  </div>
   <canvas id="recht" width="450" height="450" hidden></canvas>
 
   <div class="onder">
@@ -140,8 +168,11 @@
       <button class="stil" id="opnieuw" disabled>Opnieuw zoeken</button>
     </div>
   </div>
+<script src="peerjs.min.js"></script>
+<script src="qrcode.js"></script>
+<script src="koppel.js?v=1"></script>
 <script src="woordenboek.js?v=1"></script>
 <script src="lezer.js?v=2"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

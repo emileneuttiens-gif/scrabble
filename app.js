@@ -96,6 +96,7 @@ async function start() {
   over.width = video.videoWidth; over.height = video.videoHeight;
   $("opnieuw").disabled = false; $("hand").disabled = false;
   $("acties").hidden = false;
+  $("koppel").hidden = false;
   if (!st.cvKlaar) {
     zetStatus("Even laden…", "zoek");
     try { await laadCv(); st.cvKlaar = true; }
@@ -694,7 +695,61 @@ function verwerkLezing(gelezen) {
   else if (!L.woorden.length) zetStatus("Geen woorden gevonden", "ok");
   else if (fout.length) zetStatus(fout.length === 1 ? `Fout woord: ${fout[0].woord}` : `${fout.length} foute woorden: ${fout.map(w => w.woord).join(", ")}`, "fout");
   else zetStatus(`${L.woorden.length} ${L.woorden.length === 1 ? "woord" : "woorden"} · alles klopt`, "ok");
+  stuurScherm();
 }
+
+// ---------------------------------------------------------------- tweede scherm
+function staatVoorScherm() {
+  const z = spel.zetten[spel.zetten.length - 1];
+  const v = st.lees && st.lees.jokerVraag;
+  return {
+    spelers: spel.spelers, stand: spel.spelers.map((n, i) => stand(i)), aanBeurt: spel.aanBeurt,
+    zetten: spel.zetten.length,
+    laatste: z ? { speler: z.speler, woorden: z.woorden, punten: z.punten, bonus: z.bonus } : null,
+    status: $("status").textContent, statusSoort: $("status").className,
+    jokerVraag: v && !$("jokervraag").hidden ? { r: v.r, c: v.c, opties: v.opties } : null,
+  };
+}
+function stuurScherm() { if (window.Koppel) Koppel.stuur(staatVoorScherm()); }
+
+function kiesJoker(r, c, l) {
+  if (!st.lees) return;
+  st.lees.jokerKeuze[`${r},${c}`] = l;
+  st.lees.jokerVraag = null;
+  $("jokervraag").hidden = true; $("jokervraag").dataset.sleutel = "";
+  stuurScherm();
+}
+
+if (window.Koppel) Koppel.opBericht(b => {
+  if (b.type === "joker") kiesJoker(b.r, b.c, b.letter);
+  else if (b.type === "terug") zetTerug();
+  else if (b.type === "beurt" && b.speler >= 0 && b.speler < spel.spelers.length) {
+    spel.aanBeurt = b.speler; $("scores").dataset.sleutel = ""; toonScores();
+  }
+  stuurScherm();
+});
+
+function toonKoppel() {
+  const vak = $("koppelvak");
+  const status = (s, wat) => {
+    const t = { start: "Even verbinden…", wacht: "Scan de code met het tweede toestel", gekoppeld: "Gekoppeld",
+                fout: "Koppelen lukt niet" + (wat === "network" || wat === "server-error" ? ": geen verbinding met de koppelserver" : "") }[s];
+    $("koppelStatus").textContent = t || "";
+    $("koppelStatus").className = s === "gekoppeld" ? "ok" : s === "fout" ? "fout" : "";
+    $("koppel").classList.toggle("aan", s === "gekoppeld");
+    if (s === "gekoppeld" && !vak.hidden) setTimeout(() => { vak.hidden = true; }, 1200);
+    if (s === "gekoppeld") stuurScherm();
+  };
+  Koppel.start(status);
+  const link = Koppel.link();
+  const qr = qrcode(0, "M"); qr.addData(link); qr.make();
+  $("koppelQr").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+  $("koppelCode").textContent = Koppel.code();
+  $("koppelLink").textContent = link;
+  vak.hidden = false;
+}
+$("koppel").addEventListener("click", toonKoppel);
+$("koppelSluit").addEventListener("click", () => { $("koppelvak").hidden = true; });
 
 function verbeterMetWoordenlijst(letters, kansen, wb) {
   // Een fout woord kan ook een verkeerd gelezen letter zijn (J of I, E of B, ...). Als de tweede keus van het netje
@@ -912,7 +967,7 @@ function toonScores() {
     b.innerHTML = `<span></span><b></b>`;
     b.firstChild.textContent = naam; b.lastChild.textContent = stand(i);
     b.title = "Tik: deze speler is aan de beurt";
-    b.addEventListener("click", () => { spel.aanBeurt = i; vak.dataset.sleutel = ""; toonScores(); });
+    b.addEventListener("click", () => { spel.aanBeurt = i; vak.dataset.sleutel = ""; toonScores(); stuurScherm(); });
     vak.appendChild(b);
   });
   $("terug").disabled = !spel.zetten.length;
@@ -925,6 +980,7 @@ function zetTerug() {
   spel.melding = { tekst: `Zet teruggedraaid (${z.woorden.map(w => w.woord).join(" + ")})`, tot: performance.now() + 4000 };
   zetStatus(spel.melding.tekst, "ok");
   $("scores").dataset.sleutel = ""; toonScores();
+  stuurScherm();
 }
 
 // ---------------------------------------------------------------- jokers
@@ -984,8 +1040,7 @@ function toonJokerVraag() {
     const b = document.createElement("button");
     b.className = "letter"; b.textContent = l;
     b.addEventListener("click", () => {
-      st.lees.jokerKeuze[`${v.r},${v.c}`] = l;
-      st.lees.jokerVraag = null; vak.hidden = true; vak.dataset.sleutel = "";
+      kiesJoker(v.r, v.c, l);
     });
     knoppen.appendChild(b);
   }

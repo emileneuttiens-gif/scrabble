@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Scrabble Scorebord</title>
+<style>
+  /* Tweede scherm: alleen de stand, groot en rustig, leesbaar van over de tafel */
+  :root {
+    --zwart: #000; --vlak: #141414; --lijn: #2a2a2a; --wit: #f5f5f2; --grijs: rgba(245,245,242,0.6);
+    --groen: #7fd18b; --rood: #ff5a4f; --oranje: #f0c36b;
+    --letter: -apple-system, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; min-height: 100%; background: var(--zwart); color: var(--wit); font: 17px/1.4 var(--letter); }
+  body { padding: max(20px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(24px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+  main { max-width: 760px; margin: 0 auto; display: grid; gap: 22px; }
+  .kop { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--grijs); font-size: 14px; }
+  .verbinding::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: var(--oranje); vertical-align: 1px; }
+  .verbinding.ok::before { background: var(--groen); }
+
+  .spelers { display: grid; gap: 10px; }
+  .speler { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-radius: 18px;
+            background: var(--vlak); border: 2px solid transparent; color: var(--wit); font: inherit; width: 100%; text-align: left; cursor: pointer; }
+  .speler.aan { border-color: var(--groen); }
+  .speler .naam { font-size: clamp(20px, 5vw, 30px); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .speler .beurt { display: block; font-size: 13px; font-weight: 500; color: var(--groen); }
+  .speler .punten { font-size: clamp(34px, 9vw, 56px); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .laatste { padding: 18px 20px; border-radius: 18px; border: 1px solid var(--lijn); display: grid; gap: 4px; }
+  .laatste .wie { color: var(--grijs); font-size: 14px; }
+  .laatste .woorden { font-size: clamp(22px, 6vw, 34px); font-weight: 700; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+  .laatste .pt { color: var(--groen); font-weight: 600; }
+  .status { color: var(--grijs); font-size: 15px; text-align: center; }
+  .status.fout { color: var(--rood); }
+
+  .joker { padding: 18px; border-radius: 18px; background: #2a2412; border: 1px solid var(--oranje); display: grid; gap: 12px; justify-items: center; }
+  .joker p { margin: 0; font-size: 18px; font-weight: 600; }
+  .letters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .letters button { width: 48px; height: 48px; border: 0; border-radius: 12px; background: var(--wit); color: #000; font: 700 20px var(--letter); cursor: pointer; }
+
+  .acties { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+  .stil { background: none; border: 1px solid var(--lijn); color: var(--grijs); border-radius: 999px; padding: 10px 18px; font: 500 15px var(--letter); cursor: pointer; }
+  .stil.zeker { border-color: var(--rood); color: var(--rood); }
+
+  .koppelen { display: grid; gap: 14px; justify-items: center; text-align: center; padding-top: 18vh; }
+  .koppelen input { font: 600 26px ui-monospace, Menlo, monospace; letter-spacing: 0.15em; text-transform: uppercase; text-align: center;
+                    width: 240px; padding: 12px; border-radius: 14px; border: 1px solid var(--lijn); background: var(--vlak); color: var(--wit); }
+  .koppelen button { background: var(--wit); color: #000; border: 0; border-radius: 999px; padding: 14px 28px; font: 600 16px var(--letter); cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--wit); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <section class="koppelen" id="koppelen" hidden>
+    <h1 style="margin:0;font-size:28px">Scorebord</h1>
+    <p style="margin:0;color:var(--grijs)">Tik op "Koppel" in de Scrabble-app en typ de code hieronder, of scan de QR-code.</p>
+    <input id="codeIn" maxlength="6" autocomplete="off" autocapitalize="characters" placeholder="CODE" aria-label="Koppelcode">
+    <button id="codeKnop">Koppel</button>
+  </section>
+
+  <section id="bord" hidden>
+    <div style="display:grid;gap:22px">
+      <div class="kop"><span class="verbinding" id="verbinding">Verbinden…</span><span id="zetten"></span></div>
+      <div class="spelers" id="spelers"></div>
+      <div class="joker" id="joker" hidden>
+        <p>Welke letter is de joker?</p>
+        <div class="letters" id="jokerLetters"></div>
+      </div>
+      <div class="laatste" id="laatste" hidden>
+        <span class="wie" id="laatsteWie"></span>
+        <span class="woorden" id="laatsteWoorden"></span>
+      </div>
+      <div class="status" id="status"></div>
+      <div class="acties">
+        <button class="stil" id="terug">Zet terug</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="peerjs.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const lokaal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+const instelling = lokaal ? { host: location.hostname, port: 9000, path: "/scrabble" } : {};
+let conn = null, peer = null, code = null, staat = null;
+
+function verbindingTekst(t, ok) { const v = $("verbinding"); v.textContent = t; v.className = "verbinding" + (ok ? " ok" : ""); }
+
+function koppel(c) {
+  code = c.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (code.length !== 6) return;
+  history.replaceState(null, "", "#" + code);
+  $("koppelen").hidden = true; $("bord").hidden = false;
+  verbindingTekst("Verbinden…", false);
+  if (!peer || peer.destroyed) {
+    peer = new Peer(undefined, { ...instelling, debug: 0 });
+    peer.on("open", verbind);
+    peer.on("disconnected", () => setTimeout(() => peer && !peer.destroyed && peer.reconnect(), 2000));
+    peer.on("error", e => {
+      if (e.type === "peer-unavailable") verbindingTekst("De app is niet bereikbaar. Staat het spel open?", false);
+      else verbindingTekst("Verbinding mislukt (" + e.type + "), opnieuw proberen…", false);
+      setTimeout(verbind, 3000);
+    });
+  } else verbind();
+}
+
+function verbind() {
+  if (!peer || peer.destroyed || peer.disconnected) return;
+  if (conn && conn.open) return;
+  conn = peer.connect("scrabble-camera-" + code, { reliable: true });
+  conn.on("open", () => { verbindingTekst("Gekoppeld", true); houdSchermAan(); });
+  conn.on("data", d => { if (d && d.type === "stand") { staat = d; toon(); } });
+  conn.on("close", () => { verbindingTekst("Verbinding weg, opnieuw proberen…", false); conn = null; setTimeout(verbind, 2000); });
+}
+
+function stuur(b) { if (conn && conn.open) conn.send(b); }
+
+function toon() {
+  const s = staat;
+  $("zetten").textContent = s.zetten ? `${s.zetten} ${s.zetten === 1 ? "zet" : "zetten"}` : "";
+  const lijst = $("spelers"); lijst.textContent = "";
+  s.spelers.forEach((naam, i) => {
+    const b = document.createElement("button");
+    b.className = "speler" + (i === s.aanBeurt ? " aan" : "");
+    b.title = "Tik: deze speler is aan de beurt";
+    const links = document.createElement("span"); links.className = "naam"; links.textContent = naam;
+    if (i === s.aanBeurt) { const k = document.createElement("span"); k.className = "beurt"; k.textContent = "aan de beurt"; links.appendChild(k); }
+    const p = document.createElement("span"); p.className = "punten"; p.textContent = s.stand[i];
+    b.append(links, p);
+    b.addEventListener("click", () => stuur({ type: "beurt", speler: i }));
+    lijst.appendChild(b);
+  });
+  if (s.laatste) {
+    $("laatste").hidden = false;
+    $("laatsteWie").textContent = `Laatste zet · ${s.spelers[s.laatste.speler]}`;
+    $("laatsteWoorden").innerHTML = "";
+    $("laatsteWoorden").append(s.laatste.woorden.map(w => w.woord).join(" + ") + " ");
+    const pt = document.createElement("span"); pt.className = "pt";
+    pt.textContent = `${s.laatste.punten} punten${s.laatste.bonus ? " (met 50 bonus)" : ""}`;
+    $("laatsteWoorden").appendChild(pt);
+  } else $("laatste").hidden = true;
+  $("status").textContent = s.status || "";
+  $("status").className = "status" + (s.statusSoort === "fout" ? " fout" : "");
+  const j = s.jokerVraag;
+  $("joker").hidden = !j;
+  if (j) {
+    const l = $("jokerLetters"); l.textContent = "";
+    j.opties.forEach(x => {
+      const b = document.createElement("button"); b.textContent = x;
+      b.addEventListener("click", () => stuur({ type: "joker", r: j.r, c: j.c, letter: x }));
+      l.appendChild(b);
+    });
+  }
+  $("terug").disabled = !s.zetten;
+}
+
+// "Zet terug" vraagt eerst om bevestiging (tweede tik)
+let zeker = null;
+$("terug").addEventListener("click", () => {
+  const k = $("terug");
+  if (!k.classList.contains("zeker")) {
+    k.classList.add("zeker"); k.textContent = "Tik nog eens om terug te draaien";
+    clearTimeout(zeker); zeker = setTimeout(() => { k.classList.remove("zeker"); k.textContent = "Zet terug"; }, 3000);
+    return;
+  }
+  clearTimeout(zeker); k.classList.remove("zeker"); k.textContent = "Zet terug";
+  stuur({ type: "terug" });
+});
+
+let slot = null;
+async function houdSchermAan() {
+  try { if ("wakeLock" in navigator && (!slot || slot.released)) slot = await navigator.wakeLock.request("screen"); } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { houdSchermAan(); verbind(); } });
+
+$("codeKnop").addEventListener("click", () => koppel($("codeIn").value));
+$("codeIn").addEventListener("keydown", e => { if (e.key === "Enter") koppel($("codeIn").value); });
+
+const uitLink = location.hash.slice(1);
+if (uitLink) koppel(uitLink); else $("koppelen").hidden = false;
+
+// voor het testen
+window.scorebordStaat = () => ({ staat, verbinding: $("verbinding").textContent });
+</script>
+</body>
+</html>
