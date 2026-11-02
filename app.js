@@ -134,8 +134,26 @@ document.addEventListener("visibilitychange", async () => {
 });
 
 // ---------------------------------------------------------------- hoofdlus
+// Het camerabeeld kan na de start van grootte veranderen (bv. een iPhone die van liggend naar staand beeld gaat).
+// Dan moet de tekenlaag mee, en kloppen de hoeken van het bord niet meer: opnieuw zoeken, het spel blijft.
+function controleerBeeldmaat() {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h || (over.width === w && over.height === h)) return;
+  const oud = [over.width, over.height];
+  over.width = w; over.height = h;
+  if (st.hoek && oud[0] && oud[1]) {
+    volgStop();
+    const bezig = st.vast;
+    st.vast = false; st.vraagt = false; st.hoek = null; st.geschiedenis = []; st.stabiel = 0;
+    $("vraag").hidden = true; $("acties").hidden = false;
+    if (bezig) volg.terugzoeken = true;
+    zetStatus("Bord zoeken…", "zoek");
+  }
+}
+
 function lus(t) {
   if (!st.loopt) return;
+  controleerBeeldmaat();
   if (!st.vast && !st.hand && !st.vraagt && t - st.laatstGezocht > ZOEK_MS) {
     st.laatstGezocht = t;
     try { zoekBord(); } catch (e) { console.error(e); }

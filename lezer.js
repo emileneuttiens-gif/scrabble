@@ -80,6 +80,7 @@
     const bg = mediaan(hL, nL), fg = mediaan(hD, nD);
     if (bg - fg < CMIN) return null;
     if (bg < 110 || mediaan(hS, nL) > 100) return null;
+    if (nD > 0.5 * L * L) return null;   // meer donker dan licht: geen steen (bv. een premievak met witte letters)
     const n = cv.connectedComponentsWithStats(inkMat, lab, stats, cent, 8, cv.CV_32S);
     const st = stats.data32S;
     let beste = -1, opp = -1;
