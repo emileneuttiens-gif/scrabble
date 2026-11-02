@@ -423,6 +423,7 @@ function vraag() {
 }
 
 function bevestig() {
+  volg.sprong = performance.now();
   const volgde = st.vraagt;
   st.vraagt = false; st.vast = true; nieuwLezen();
   if (!volgde) volgStart();
@@ -453,7 +454,7 @@ function opnieuwZoeken() {
 // bord als homografie (RANSAC: wie niet meedoet, zoals een hand, telt niet). Af en toe het raster opnieuw inpassen
 // om kleine fouten niet te laten optellen. Bij beweging even niet lezen (wazig beeld).
 const VOLG_MS = 90, STIL_MS = 350, KWIJT_MS = 1500, PASSEN_MS = 700;
-const volg = { stap: 0, misPassen: 0, laatstControle: 0, ander: null, laatst: 0, vorig: null, punten: null, bewogen: 0, kwijt: 0, laatstGepast: 0, terugzoeken: false };
+const volg = { goedGepast: 0, sprong: 0, stap: 0, misPassen: 0, laatstControle: 0, ander: null, laatst: 0, vorig: null, punten: null, bewogen: 0, kwijt: 0, laatstGepast: 0, terugzoeken: false };
 
 // is de nieuwe vierhoek een geloofwaardige volgende stand van de oude? (bol, niet plots veel groter/kleiner/scheef)
 function geloofwaardig(oud, nieuw) {
@@ -485,6 +486,7 @@ function controleerBord() {
     const jk = st.lees ? st.lees.jokerKeuze : {};
     nieuwLezen(); st.lees.jokerKeuze = jk;   // de oude lezingen kwamen van een verkeerd raster
     zetStatus("Bord opnieuw ingepast", "ok");
+    volg.sprong = performance.now();
   } else volg.ander = k.h;
 }
 
@@ -563,7 +565,7 @@ function volgBord(t) {
     if (r.sc >= 12) {
       const nh = r.h.map(([x, y]) => [x / s, y / s]);
       const verschil = Math.max(...nh.map((p, k) => Math.hypot(p[0] - st.hoek[k][0], p[1] - st.hoek[k][1]))) * s;
-      if (verschil < 0.35 * vakMaat) { st.hoek = nh; gelukt = gelukt || !volg.vorig; volg.misPassen = 0; }
+      if (verschil < 0.35 * vakMaat) { st.hoek = nh; gelukt = gelukt || !volg.vorig; volg.misPassen = 0; volg.goedGepast = t; }
       else volg.misPassen++;
     } else volg.misPassen++;
   }
@@ -693,7 +695,7 @@ function verbeterMetWoordenlijst(letters, kansen, wb) {
 // Nederlandse letterwaarden (staan ook rechtsonder op de stenen). Een joker (kleine letter) is 0 waard.
 const WAARDE = { A: 1, B: 3, C: 5, D: 2, E: 1, F: 4, G: 3, H: 4, I: 1, J: 4, K: 3, L: 3, M: 3, N: 1, O: 1, P: 3, Q: 10,
                  R: 2, S: 2, T: 2, U: 4, V: 4, W: 5, X: 8, Y: 8, Z: 4 };
-const ZET_STABIEL = 3;   // zoveel lezingen na elkaar dezelfde nieuwe stenen: dan pas is de zet gelegd
+const ZET_STABIEL = 5;   // zoveel lezingen na elkaar dezelfde nieuwe stenen: dan pas is de zet gelegd
 
 function puntenVoorZet(letters, nieuw) {
   // alleen de nieuwe stenen krijgen de premie van hun vakje; elk woord met minstens één nieuwe steen telt
@@ -719,8 +721,35 @@ function puntenVoorZet(letters, nieuw) {
   return { woorden: uit, bonus, punten: totaal + bonus };
 }
 
+// Zitten we zeker goed op het bord? Raster kort geleden nog netjes op de lijnen, niet net verschoven of teruggevonden,
+// en (bijna) alle stenen die er al lagen worden nog op hun plaats gelezen. Anders tellen we niets.
+function bordBetrouwbaar(letters, behalve) {
+  const t = performance.now();
+  if (volg.misPassen > 0 || t - volg.goedGepast > 2000 || t - volg.sprong > 0 && t - volg.sprong < 4000) return false;
+  let mis = 0;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (!spel.basis[r][c] || (behalve && behalve.some(([a, b]) => a === r && b === c))) continue;
+    if (!letters[r][c] || letters[r][c].toUpperCase() !== spel.basis[r][c].toUpperCase()) mis++;
+  }
+  return mis <= 1;
+}
+
 function volgZetten(letters) {
   if (!spel.basis) { spel.basis = letters.map(r => r.slice()); return; }   // wat er al lag bij het begin telt niet
+  // De laatste zet aangepast (steen weggenomen of vervangen, zoals POR -> DOR)? Dan draaien we die zet terug;
+  // de nieuwe stand wordt daarna gewoon opnieuw als zet van dezelfde speler geteld.
+  const laatste = spel.zetten[spel.zetten.length - 1];
+  if (laatste && laatste.nieuw && bordBetrouwbaar(letters, laatste.nieuw)) {
+    const veranderd = laatste.nieuw.some(([r, c]) => st.lees.sinds[r][c] >= RUSTIG &&
+      (!letters[r][c] || letters[r][c].toUpperCase() !== spel.basis[r][c].toUpperCase()));
+    if (veranderd) {
+      spel.zetten.pop();
+      spel.basis = laatste.vorigeBasis; spel.aanBeurt = laatste.speler; spel.kandidaat = null;
+      spel.melding = { tekst: `Zet aangepast (${laatste.woorden.map(w => w.woord).join(" + ")} telt niet meer)`, tot: performance.now() + 4000 };
+      $("scores").dataset.sleutel = "";
+      return;
+    }
+  }
   const nieuw = [];
   for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (letters[r][c] && !spel.basis[r][c]) nieuw.push([r, c]);
   if (!nieuw.length) { spel.kandidaat = null; return; }
@@ -736,6 +765,7 @@ function volgZetten(letters) {
     if (!letters[r][c]) { spel.kandidaat = null; return; }
   }
   if (nieuw.some(([r, c]) => letters[r][c] === "?")) { spel.kandidaat = null; return; }
+  if (nieuw.length > 7 || !bordBetrouwbaar(letters)) { spel.kandidaat = null; return; }
   const basisLeeg = spel.basis.every(r => r.every(x => !x));
   const raakt = nieuw.some(([r, c]) => [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
     .some(([a, b]) => a >= 0 && b >= 0 && a < N && b < N && spel.basis[a][b]));
@@ -750,7 +780,7 @@ function volgZetten(letters) {
   spel.kandidaat = null;
   const vorigeBasis = spel.basis.map(r => r.slice());
   nieuw.forEach(([r, c]) => { spel.basis[r][c] = letters[r][c]; });
-  spel.zetten.push({ speler: spel.aanBeurt, ...zet, vorigeBasis });
+  spel.zetten.push({ speler: spel.aanBeurt, ...zet, vorigeBasis, nieuw });
   const naam = spel.spelers[spel.aanBeurt];
   spel.melding = { tekst: `${zet.woorden.map(w => w.woord).join(" + ")}: ${zet.punten} punten voor ${naam}${zet.bonus ? " (met 50 bonus)" : ""}`,
                    tot: performance.now() + 6000 };
