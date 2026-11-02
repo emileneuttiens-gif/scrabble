@@ -83,6 +83,7 @@ async function start() {
     await video.play();
   } catch (e) {
     zetStatus("Scrabble");
+    $("startvak").hidden = false;   // opnieuw proberen
     toonFout(e && e.name === "NotAllowedError"
       ? "Je hebt de camera niet toegestaan. Sta de camera toe via het slotje naast het adres en probeer opnieuw."
       : "De camera start niet: " + (e && e.message ? e.message : e));
@@ -747,6 +748,60 @@ function tekenRecht() {
 
 // ---------------------------------------------------------------- knoppen
 $("start").addEventListener("click", start);
+
+// ---------------------------------------------------------------- menu: spel starten en spelers
+const MIN_SPELERS = 2, MAX_SPELERS = 4;   // Scrabble is voor 2 tot 4 spelers (4 rekjes)
+function bewaardeNamen() {
+  try { const n = JSON.parse(localStorage.getItem("scrabbleSpelers") || "[]"); return Array.isArray(n) ? n : []; }
+  catch (e) { return []; }
+}
+function spelerRij(naam) {
+  const li = document.createElement("li");
+  const inv = document.createElement("input");
+  inv.type = "text"; inv.maxLength = 16; inv.autocomplete = "off"; inv.enterKeyHint = "next"; inv.value = naam || "";
+  const weg = document.createElement("button");
+  weg.className = "weg"; weg.type = "button"; weg.textContent = "×"; weg.setAttribute("aria-label", "Speler verwijderen");
+  weg.addEventListener("click", () => { li.remove(); werkSpelersBij(); });
+  li.append(inv, weg);
+  return li;
+}
+function werkSpelersBij() {
+  const rijen = [...$("spelerLijst").children];
+  rijen.forEach((li, i) => {
+    li.querySelector("input").placeholder = `Speler ${i + 1}`;
+    li.querySelector("input").setAttribute("aria-label", `Naam speler ${i + 1}`);
+    li.querySelector(".weg").style.visibility = rijen.length > MIN_SPELERS ? "visible" : "hidden";
+  });
+  $("spelerErbij").hidden = rijen.length >= MAX_SPELERS;
+}
+$("nieuwSpel").addEventListener("click", () => {
+  const lijst = $("spelerLijst");
+  lijst.textContent = "";
+  const namen = bewaardeNamen().slice(0, MAX_SPELERS);
+  for (let i = 0; i < Math.max(MIN_SPELERS, namen.length); i++) lijst.appendChild(spelerRij(namen[i]));
+  werkSpelersBij();
+  $("welkom").hidden = true; $("spelersScherm").hidden = false;
+});
+$("spelerErbij").addEventListener("click", () => {
+  const li = spelerRij("");
+  $("spelerLijst").appendChild(li); werkSpelersBij();
+  li.querySelector("input").focus();
+});
+$("menuTerug").addEventListener("click", () => { $("spelersScherm").hidden = true; $("welkom").hidden = false; });
+$("spelerLijst").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const li = e.target.closest("li"), volgende = li && li.nextElementSibling;
+  if (volgende) volgende.querySelector("input").focus(); else $("begin").click();
+});
+$("begin").addEventListener("click", () => {
+  const namen = [...$("spelerLijst").querySelectorAll("input")].map((x, i) => x.value.trim() || `Speler ${i + 1}`);
+  try { localStorage.setItem("scrabbleSpelers", JSON.stringify(namen)); } catch (e) {}
+  spel.spelers = namen; spel.zetten = []; spel.aanBeurt = 0; spel.basis = null; spel.kandidaat = null; spel.melding = null;
+  $("scores").dataset.sleutel = "";
+  $("menu").hidden = true; $("status").hidden = false;
+  start();
+});
 
 $("opnieuw").addEventListener("click", opnieuwZoeken);
 $("terug").addEventListener("click", zetTerug);
