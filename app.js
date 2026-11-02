@@ -181,6 +181,75 @@ function vindRaster(grijs, kader, zoek) {
   return { h, sc };
 }
 
+// ---- het vaste patroon van de premievakjes (hetzelfde op elk standaard Scrabblebord)
+const PREMIE = (() => {
+  const m = new Uint8Array(N * N);
+  const zet = lijst => lijst.forEach(([r, c]) => { m[r * N + c] = 1; });
+  zet([[0,0],[0,7],[0,14],[7,0],[7,14],[14,0],[14,7],[14,14]]);                                  // woordwaarde x3
+  for (let i = 1; i < 5; i++) zet([[i,i],[i,14-i],[14-i,i],[14-i,14-i]]);                          // woordwaarde x2
+  zet([[7,7]]);
+  zet([[1,5],[1,9],[5,1],[5,5],[5,9],[5,13],[9,1],[9,5],[9,9],[9,13],[13,5],[13,9]]);              // letterwaarde x3
+  zet([[0,3],[0,11],[2,6],[2,8],[3,0],[3,7],[3,14],[6,2],[6,6],[6,8],[6,12],[7,3],[7,11],[8,2],    // letterwaarde x2
+       [8,6],[8,8],[8,12],[11,0],[11,7],[11,14],[12,6],[12,8],[14,3],[14,11]]);
+  return m;
+})();
+
+function premieVerschuiving(rgb, h) {
+  // Zet het raster plus één vakje rondom recht (17 x 17), neemt per vakje de kleur van het midden,
+  // en kijkt bij welke verschuiving (-1, 0, +1 vakje) de premievakjes het duidelijkst afwijken van de gewone.
+  const C = 16, M = N + 2;
+  const bron = cv.matFromArray(4, 1, cv.CV_32FC2, h.flat());
+  const doel = cv.matFromArray(4, 1, cv.CV_32FC2, [C, C, (N + 1) * C, C, (N + 1) * C, (N + 1) * C, C, (N + 1) * C]);
+  const T = cv.getPerspectiveTransform(bron, doel);
+  const w = new cv.Mat(), lab = new cv.Mat();
+  cv.warpPerspective(rgb, w, T, new cv.Size(M * C, M * C));
+  cv.cvtColor(w, lab, cv.COLOR_RGB2Lab);
+  const d = lab.data, kleur = new Float32Array(M * M * 3);
+  for (let r = 0; r < M; r++) for (let c = 0; c < M; c++) {
+    let a = 0, b = 0, l = 0;
+    for (let y = r * C + 4; y < r * C + 12; y++) for (let x = c * C + 4; x < c * C + 12; x++) {
+      const i = (y * M * C + x) * 3; l += d[i]; a += d[i + 1]; b += d[i + 2];
+    }
+    const k = (r * M + c) * 3; kleur[k] = l / 64; kleur[k + 1] = a / 64; kleur[k + 2] = b / 64;
+  }
+  [bron, doel, T, w, lab].forEach(m => m.delete());
+  let best = { score: -9, dx: 0, dy: 0 };
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const cel = (r, c) => ((r + 1 + dy) * M + (c + 1 + dx)) * 3;
+    // 'gewone' kleur = mediaan van de gewone vakjes
+    const gewoon = [0, 1, 2].map(j => {
+      const v = [];
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!PREMIE[r * N + c]) v.push(kleur[cel(r, c) + j]);
+      v.sort((x, y) => x - y);
+      return v[v.length >> 1];
+    });
+    let sp = 0, np_ = 0, sg = 0, ng = 0, som = 0, som2 = 0;
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const i = cel(r, c);
+      const afstand = Math.hypot(kleur[i] - gewoon[0], kleur[i + 1] - gewoon[1], kleur[i + 2] - gewoon[2]);
+      if (PREMIE[r * N + c]) { sp += afstand; np_++; } else { sg += afstand; ng++; }
+      som += afstand; som2 += afstand * afstand;
+    }
+    const gem = som / (N * N), sd = Math.sqrt(Math.max(som2 / (N * N) - gem * gem, 0)) + 1e-3;
+    const score = (sp / np_ - sg / ng) / sd;
+    if (score > best.score) best = { score, dx, dy };
+  }
+  return best;
+}
+
+function verschuif(h, dx, dy) {
+  // het raster een heel vakje opschuiven, langs zijn eigen (schuine) richtingen
+  const bron = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, N, 0, N, N, 0, N]);
+  const doel = cv.matFromArray(4, 1, cv.CV_32FC2, h.flat());
+  const T = cv.getPerspectiveTransform(bron, doel);
+  const pts = cv.matFromArray(4, 1, cv.CV_32FC2, [dx, dy, N + dx, dy, N + dx, N + dy, dx, N + dy]);
+  const uit = new cv.Mat();
+  cv.perspectiveTransform(pts, uit, T);
+  const r = [0, 1, 2, 3].map(k => [uit.data32F[2 * k], uit.data32F[2 * k + 1]]);
+  [bron, doel, T, pts, uit].forEach(m => m.delete());
+  return r;
+}
+
 function vierhoek(c, opp) {
   // contour -> vierhoek via de omhullende (werkt ook als een stuk van de rand ontbreekt)
   const romp = new cv.Mat();
@@ -245,12 +314,24 @@ function zoekBord() {
     let r = vindRaster(grijs, k.h, GROF);
     if (r.sc > 10) r = vindRaster(grijs, r.h, FIJN);
     if (r.sc > 10) r = vindRaster(grijs, r.h, HEEL_FIJN);
+    if (r.sc >= 12) {
+      // controle met het vaste patroon van de premievakjes: ligt het raster een vakje verschoven
+      // (bv. omdat letters in de rand van het bord op rasterlijnen lijken), dan schuiven we het terug
+      const p = premieVerschuiving(rgb, r.h);
+      r.patroon = p.score;
+      if (p.dx || p.dy) {
+        const terug = vindRaster(grijs, verschuif(r.h, p.dx, p.dy), HEEL_FIJN);
+        if (terug.sc >= 12) { r = terug; r.patroon = p.score; }
+      }
+    }
     return r;
   });
   [src, grijs, hsv, rgb, kanalen, verzadiging, kern].forEach(m => m.delete());
-  kandidaten.sort((a, b) => b.sc - a.sc);
+  kandidaten.sort((a, b) => (b.patroon || 0) - (a.patroon || 0) || b.sc - a.sc);
   const geldig = kandidaten
-    .filter(k => k.sc >= 14.5)                                  // minstens 15 van de 16 lijnen in elke richting
+    // rasterlijnen kloppen (15 van de 16) en het premiepatroon klopt, of: het patroon klopt heel duidelijk
+    // en de meeste lijnen zijn er (bij een heel schuin bord zijn de verste lijnen soms te dun om te zien)
+    .filter(k => (k.sc >= 14.5 && k.patroon >= 0.6) || (k.sc >= 12 && k.patroon >= 1.0))
     .map(k => ({ sc: k.sc, h: k.h.map(([x, y]) => [x / s, y / s]) }))   // terug naar videopixels
     .filter(k => !isAfgewezen(k.h));
   // voorkeur voor wat we vorige keer ook al zagen: zo springt het kader niet heen en weer
@@ -331,9 +412,9 @@ function teken() {
   c.strokeStyle = (st.vast || st.vraagt) ? "#7fd18b" : "#f0c36b";
   c.lineWidth = lijn;
   c.beginPath(); h.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.closePath(); c.stroke();
-  // het raster zelf (dunne lijnen), via bilineaire interpolatie tussen de hoeken
+  // het raster zelf (dunne lijnen), perspectivisch juist: verder weg liggen de lijnen dichter bij elkaar
   c.lineWidth = lijn / 3; c.globalAlpha = 0.6;
-  const punt = (u, v) => [0, 1].map(d => (1 - u) * (1 - v) * h[0][d] + u * (1 - v) * h[1][d] + u * v * h[2][d] + (1 - u) * v * h[3][d]);
+  const punt = perspectief(h);
   c.beginPath();
   for (let k = 1; k < N; k++) {
     const u = k / N;
@@ -342,6 +423,18 @@ function teken() {
   }
   c.stroke(); c.globalAlpha = 1;
   if (st.vast) tekenRecht();
+}
+
+function perspectief(h) {
+  // (u, v) in 0..1 over het speelveld -> punt in het camerabeeld (homografie uit de 4 hoeken)
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = h;
+  const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2;
+  const sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+  const den = dx1 * dy2 - dx2 * dy1 || 1e-9;
+  const g = (sx * dy2 - dx2 * sy) / den, k = (dx1 * sy - sx * dy1) / den;
+  const a = x1 - x0 + g * x1, b = x3 - x0 + k * x3, c = x0;
+  const d = y1 - y0 + g * y1, e = y3 - y0 + k * y3, f = y0;
+  return (u, v) => { const w = g * u + k * v + 1; return [(a * u + b * v + c) / w, (d * u + e * v + f) / w]; };
 }
 
 function tekenRecht() {
