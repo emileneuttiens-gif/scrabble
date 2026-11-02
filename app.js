@@ -117,6 +117,10 @@ function lus(t) {
     volg.laatst = t;
     try { volgBord(t); } catch (e) { console.error(e); }
   }
+  if (st.vast && !volg.kwijt && t - volg.laatstControle > CONTROLE_MS) {
+    volg.laatstControle = t;
+    try { controleerBord(); } catch (e) { console.error(e); }
+  }
   // lezen meteen na het volgen (zelfde beeld), en alleen als het beeld op dit moment rustig is
   if (leesNu && st.vast && t - volg.bewogen > STIL_MS && volg.stap < 0.15 && !volg.kwijt) {
     st.lees.laatst = t;
@@ -301,6 +305,12 @@ function vierhoek(c, opp) {
 }
 
 function zoekBord() {
+  const geldig = bordKandidaten();
+  zoekBordStap(geldig);
+}
+
+// alle goede kandidaat-borden in het huidige beeld (in videopixels), beste eerst
+function bordKandidaten() {
   const s = werkbeeld();
   const src = cv.imread(werk);
   const grijs = new cv.Mat(), hsv = new cv.Mat(), rgb = new cv.Mat(), kanalen = new cv.MatVector();
@@ -364,6 +374,10 @@ function zoekBord() {
     .filter(k => (k.sc >= 14.5 && k.patroon >= 0.6) || (k.sc >= 12 && k.patroon >= 1.0))
     .map(k => ({ sc: k.sc, h: k.h.map(([x, y]) => [x / s, y / s]) }))   // terug naar videopixels
     .filter(k => !isAfgewezen(k.h));
+  return geldig;
+}
+
+function zoekBordStap(geldig) {
   // voorkeur voor wat we vorige keer ook al zagen: zo springt het kader niet heen en weer
   let keuze = geldig[0] || null;
   if (st.hoek) {
@@ -439,11 +453,44 @@ function opnieuwZoeken() {
 // bord als homografie (RANSAC: wie niet meedoet, zoals een hand, telt niet). Af en toe het raster opnieuw inpassen
 // om kleine fouten niet te laten optellen. Bij beweging even niet lezen (wazig beeld).
 const VOLG_MS = 90, STIL_MS = 350, KWIJT_MS = 1500, PASSEN_MS = 700;
-const volg = { stap: 0, laatst: 0, vorig: null, punten: null, bewogen: 0, kwijt: 0, laatstGepast: 0, terugzoeken: false };
+const volg = { stap: 0, misPassen: 0, laatstControle: 0, ander: null, laatst: 0, vorig: null, punten: null, bewogen: 0, kwijt: 0, laatstGepast: 0, terugzoeken: false };
+
+// is de nieuwe vierhoek een geloofwaardige volgende stand van de oude? (bol, niet plots veel groter/kleiner/scheef)
+function geloofwaardig(oud, nieuw) {
+  const opp = h => Math.abs(h.reduce((t, p, i) => { const q = h[(i + 1) % 4]; return t + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2;
+  const kruis = h => h.map((p, i) => { const a = h[(i + 1) % 4], b = h[(i + 2) % 4];
+    return (a[0] - p[0]) * (b[1] - a[1]) - (a[1] - p[1]) * (b[0] - a[0]); });
+  const k = kruis(nieuw);
+  if (!(k.every(v => v > 0) || k.every(v => v < 0))) return false;
+  const v = opp(nieuw) / opp(oud);
+  if (!(v > 0.8 && v < 1.25)) return false;
+  for (let i = 0; i < 4; i++) {
+    const zo = Math.hypot(oud[(i + 1) % 4][0] - oud[i][0], oud[(i + 1) % 4][1] - oud[i][1]);
+    const zn = Math.hypot(nieuw[(i + 1) % 4][0] - nieuw[i][0], nieuw[(i + 1) % 4][1] - nieuw[i][1]);
+    if (zn / zo < 0.82 || zn / zo > 1.22) return false;
+  }
+  return true;
+}
+
+// Controle: om de 2 s zoeken we het bord in het hele beeld, zoals bij het begin. Ziet die zoektocht twee keer
+// na elkaar duidelijk een ander bord dan wat we volgen, dan nemen we dat over (zoals zelf op "Opnieuw zoeken" duwen).
+const CONTROLE_MS = 2000;
+function controleerBord() {
+  const geldig = bordKandidaten();
+  if (!geldig.length || geldig.some(k => zelfdeKader(k.h, st.hoek, 0.05))) { volg.ander = null; return; }
+  const k = geldig[0];
+  if (volg.ander && zelfdeKader(volg.ander, k.h, 0.04)) {
+    volgStop(); volgStart();
+    st.hoek = k.h; volg.ander = null;
+    const jk = st.lees ? st.lees.jokerKeuze : {};
+    nieuwLezen(); st.lees.jokerKeuze = jk;   // de oude lezingen kwamen van een verkeerd raster
+    zetStatus("Bord opnieuw ingepast", "ok");
+  } else volg.ander = k.h;
+}
 
 function volgStart() {
   volgStop();
-  volg.bewogen = 0; volg.kwijt = 0; volg.laatstGepast = performance.now();
+  volg.bewogen = 0; volg.kwijt = 0; volg.misPassen = 0; volg.ander = null; volg.laatstGepast = performance.now();
 }
 function volgStop() {
   if (volg.vorig) volg.vorig.delete();
@@ -466,7 +513,7 @@ function volgBord(t) {
   cv.cvtColor(src, grijs, cv.COLOR_RGBA2GRAY);
   src.delete();
   const vakMaat = Math.hypot(st.hoek[1][0] - st.hoek[0][0], st.hoek[1][1] - st.hoek[0][1]) * s / N;
-  let gelukt = false;
+  let gelukt = false, onzin = false;
   if (volg.vorig && volg.punten && volg.punten.rows >= 12) {
     const nieuw = new cv.Mat(), status = new cv.Mat(), fout = new cv.Mat();
     cv.calcOpticalFlowPyrLK(volg.vorig, grijs, volg.punten, nieuw, status, fout, new cv.Size(21, 21), 3,
@@ -482,24 +529,31 @@ function volgBord(t) {
       const inl = new cv.Mat();
       const H = cv.findHomography(A, Bm, cv.RANSAC, 2.0, inl);
       let mee = 0; for (let i = 0; i < inl.rows; i++) mee += inl.data[i] ? 1 : 0;
-      if (!H.empty() && mee >= 12) {
+      if (!H.empty() && mee >= 15 && mee >= 0.5 * a.length / 2) {
         const hk = cv.matFromArray(4, 1, cv.CV_32FC2, st.hoek.flat().map(v => v * s)), uit = new cv.Mat();
         cv.perspectiveTransform(hk, uit, H);
         const nh = [0, 1, 2, 3].map(k => [uit.data32F[2 * k] / s, uit.data32F[2 * k + 1] / s]);
         const verschil = Math.max(...nh.map((p, k) => Math.hypot(p[0] - st.hoek[k][0], p[1] - st.hoek[k][1]))) * s;
         if (verschil > 0.5 * vakMaat) volg.bewogen = t;   // snel bewogen: beeld wazig
         volg.stap = verschil / vakMaat;
+        onzin = !geloofwaardig(st.hoek, nh);
+        if (!onzin) {
         // houd alleen de punten die meedoen
         const goed = [];
         for (let i = 0; i < inl.rows; i++) if (inl.data[i]) goed.push(b[2 * i], b[2 * i + 1]);
         volg.punten.delete(); volg.punten = cv.matFromArray(goed.length / 2, 1, cv.CV_32FC2, goed);
         st.hoek = nh; gelukt = true;
         if (volg.log) volg.log.push([Math.round(t), a.length / 2, mee, +verschil.toFixed(1)]);
+        }
         hk.delete(); uit.delete();
       }
       [A, Bm, inl, H].forEach(m => m.delete());
     }
     [nieuw, status, fout].forEach(m => m.delete());
+  }
+  if (onzin) {
+    // onmogelijke sprong (bv. punten op een weerspiegeling): deze stap negeren en de punten opnieuw kiezen
+    grijs.delete(); volgStop(); volgMislukt(t, null); return;
   }
   // stilstaand: af en toe het raster opnieuw precies inpassen (houdt het kader recht op de lijnen)
   if (volg.passen !== false && t - volg.laatstGepast > PASSEN_MS) {
@@ -509,9 +563,12 @@ function volgBord(t) {
     if (r.sc >= 12) {
       const nh = r.h.map(([x, y]) => [x / s, y / s]);
       const verschil = Math.max(...nh.map((p, k) => Math.hypot(p[0] - st.hoek[k][0], p[1] - st.hoek[k][1]))) * s;
-      if (verschil < 0.35 * vakMaat) { st.hoek = nh; gelukt = gelukt || !volg.vorig; }
-    }
+      if (verschil < 0.35 * vakMaat) { st.hoek = nh; gelukt = gelukt || !volg.vorig; volg.misPassen = 0; }
+      else volg.misPassen++;
+    } else volg.misPassen++;
   }
+  // het raster past al een tijd niet meer op de lijnen: we volgen iets anders dan het bord
+  if (volg.misPassen >= 4) { volg.misPassen = 0; grijs.delete(); volgStop(); return volgMislukt(t, "verloren"); }
   // nieuwe punten zoeken als er te weinig over zijn
   if (!volg.punten || volg.punten.rows < 60) {
     const m = bordMasker(st.hoek, s, grijs.size()), p = new cv.Mat();
@@ -525,8 +582,12 @@ function volgBord(t) {
   if (gelukt) {
     if (volg.kwijt) zetStatus("Letters lezen…", "ok");
     volg.kwijt = 0;
-  } else {
-    if (!volg.kwijt) volg.kwijt = t;
+  } else volgMislukt(t, null);
+}
+
+function volgMislukt(t, hoe) {
+  {
+    if (!volg.kwijt) volg.kwijt = hoe === "verloren" ? t - KWIJT_MS - 1 : t;
     zetStatus("Bord kwijt… richt de camera op het bord", "zoek");
     if (t - volg.kwijt > KWIJT_MS && st.vraagt) {
       // tijdens de vraag kwijtgeraakt: gewoon verder zoeken
@@ -772,7 +833,9 @@ function vulJokersIn(letters, wb) {
 function toonJokerVraag() {
   const v = st.lees && st.lees.jokerVraag;
   const vak = $("jokervraag");
-  if (!v || st.vraagt) { vak.hidden = true; vak.dataset.sleutel = ""; return; }
+  // pas vragen als het vakje een tijdje rustig als joker gelezen wordt (anders is het vaak een leesfout)
+  const rustig = v && st.lees.lezingen >= STEMMEN + RUSTIG && st.lees.sinds[v.r][v.c] >= RUSTIG;
+  if (!v || st.vraagt || !rustig) { vak.hidden = true; vak.dataset.sleutel = ""; return; }
   const sleutel = `${v.r},${v.c}:${v.opties.join("")}`;
   if (vak.dataset.sleutel === sleutel && !vak.hidden) return;
   vak.dataset.sleutel = sleutel;
@@ -978,6 +1041,7 @@ over.addEventListener("pointerdown", e => {
 
 // voor het testen: toestand opvragen, en één stilstaand beeld lezen (zonder stemmen)
 window.scrabbleVolg = volg;
+window.scrabbleSt = st;
 window.scrabbleSpel = () => ({ stand: spel.spelers.map((n, i) => stand(i)), aanBeurt: spel.aanBeurt,
   zetten: spel.zetten.map(z => ({ speler: z.speler, woorden: z.woorden, bonus: z.bonus, punten: z.punten })) });
 window.scrabbleLees = () => st.lees && ({ letters: (st.lees.getoond || st.lees.letters).map(r => r.map(l => l || ".").join("")), woorden: st.lees.woorden.map(w => w.woord + (w.geldig === false ? "!" : "")) });
