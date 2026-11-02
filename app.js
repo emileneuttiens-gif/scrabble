@@ -722,6 +722,7 @@ function staatVoorScherm() {
   const v = st.lees && st.lees.jokerVraag;
   return {
     spelers: spel.spelers, stand: spel.spelers.map((n, i) => stand(i)), aanBeurt: spel.aanBeurt,
+    kleuren: spel.spelers.map((n, i) => SPELERKLEUR[i % SPELERKLEUR.length]),
     zetten: spel.zetten.length,
     laatste: z ? { speler: z.speler, woorden: z.woorden, punten: z.punten, bonus: z.bonus } : null,
     status: $("status").textContent, statusSoort: $("status").className,
@@ -982,6 +983,7 @@ function toonScores() {
   spel.spelers.forEach((naam, i) => {
     const b = document.createElement("button");
     b.className = "speler" + (i === spel.aanBeurt ? " aan" : "");
+    b.style.setProperty("--kleur", SPELERKLEUR[i % SPELERKLEUR.length]);
     b.innerHTML = `<span></span><b></b>`;
     b.firstChild.textContent = naam; b.lastChild.textContent = stand(i);
     b.title = "Tik: deze speler is aan de beurt";
@@ -1103,7 +1105,36 @@ function teken() {
   }
 }
 
+// elke speler een eigen kleur (los van groen/rood voor goed/fout)
+const SPELERKLEUR = ["#5ab0ff", "#f0c36b", "#c792ea", "#4fd1c5"];
+function eigenaars() {
+  // per vakje: welke speler legde die steen (null = lag er al bij de start)
+  const e = [...Array(N)].map(() => Array(N).fill(null));
+  for (const z of spel.zetten) for (const [r, c] of z.nieuw || []) e[r][c] = z.speler;
+  return e;
+}
+
+function tekenEigenaars(c, punt) {
+  // de stenen van elke speler licht ingekleurd, met een balkje onderaan in zijn kleur
+  const e = eigenaars();
+  const vlak = (r, k, b, o) => {
+    c.beginPath();
+    [[k + b, r + o], [k + 1 - b, r + o], [k + 1 - b, r + 1 - b], [k + b, r + 1 - b]]
+      .forEach(([u, v], i) => { const p = punt(u / N, v / N); i ? c.lineTo(...p) : c.moveTo(...p); });
+    c.closePath(); c.fill();
+  };
+  for (let r = 0; r < N; r++) for (let k = 0; k < N; k++) {
+    const s = e[r][k];
+    if (s === null) continue;
+    c.fillStyle = SPELERKLEUR[s % SPELERKLEUR.length];
+    c.globalAlpha = 0.22; vlak(r, k, 0.06, 0.06);
+    c.globalAlpha = 0.95; vlak(r, k, 0.12, 0.8);
+  }
+  c.globalAlpha = 1;
+}
+
 function tekenWoorden(c, punt, lijn) {
+  tekenEigenaars(c, punt);
   // elk woord omlijnd: groen = bestaat, rood = bestaat niet
   for (const w of st.lees.woorden) {
     const [r0, c0] = w.cellen[0], [r1, c1] = w.cellen[w.cellen.length - 1];
@@ -1149,14 +1180,17 @@ function tekenRecht() {
   c.stroke();
   // gelezen letters op het kleine bord
   if (st.lees) {
-    const v = RECHT / N;
+    const v = RECHT / N, eig = eigenaars();
     c.font = `700 ${Math.round(v * 0.62)}px system-ui, sans-serif`; c.textAlign = "center"; c.textBaseline = "middle";
     for (let r = 0; r < N; r++) for (let k = 0; k < N; k++) {
       const l = (st.lees.getoond || st.lees.letters)[r][k];
       if (!l) continue;
       const joker = l === "?" || l !== l.toUpperCase();
+      const wie = eig[r][k];
       c.fillStyle = joker ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.72)"; c.fillRect(k * v + 1, r * v + 1, v - 2, v - 2);
-      c.fillStyle = joker ? "#333" : "#ffe08a"; c.fillText(l.toUpperCase(), k * v + v / 2, r * v + v / 2 + 1);
+      if (wie !== null) { c.fillStyle = SPELERKLEUR[wie % SPELERKLEUR.length]; c.fillRect(k * v + 1, r * v + v - 5, v - 2, 4); }
+      c.fillStyle = joker ? "#333" : wie !== null ? SPELERKLEUR[wie % SPELERKLEUR.length] : "#ffe08a";
+      c.fillText(l.toUpperCase(), k * v + v / 2, r * v + v / 2);
     }
   }
 }

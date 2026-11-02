@@ -26,6 +26,7 @@
   .speler { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-radius: 18px;
             background: var(--vlak); border: 2px solid transparent; color: var(--wit); font: inherit; width: 100%; text-align: left; cursor: pointer; }
   .speler.aan { border-color: var(--groen); }
+  .speler { box-shadow: inset 6px 0 0 var(--kleur, transparent); }
   .speler .naam { font-size: clamp(20px, 5vw, 30px); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .speler .beurt { display: block; font-size: 13px; font-weight: 500; color: var(--groen); }
   .speler .punten { font-size: clamp(34px, 9vw, 56px); font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -128,6 +129,7 @@ function toon() {
   s.spelers.forEach((naam, i) => {
     const b = document.createElement("button");
     b.className = "speler" + (i === s.aanBeurt ? " aan" : "");
+    if (s.kleuren) b.style.setProperty("--kleur", s.kleuren[i]);
     b.title = "Tik: deze speler is aan de beurt";
     const links = document.createElement("span"); links.className = "naam"; links.textContent = naam;
     if (i === s.aanBeurt) { const k = document.createElement("span"); k.className = "beurt"; k.textContent = "aan de beurt"; links.appendChild(k); }
@@ -139,6 +141,7 @@ function toon() {
   if (s.laatste) {
     $("laatste").hidden = false;
     $("laatsteWie").textContent = `Laatste zet · ${s.spelers[s.laatste.speler]}`;
+    $("laatsteWie").style.color = s.kleuren ? s.kleuren[s.laatste.speler] : "";
     $("laatsteWoorden").innerHTML = "";
     $("laatsteWoorden").append(s.laatste.woorden.map(w => w.woord).join(" + ") + " ");
     const pt = document.createElement("span"); pt.className = "pt";
