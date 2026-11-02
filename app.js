@@ -13,7 +13,8 @@ const video = $("video"), over = $("over"), recht = $("recht");
 const werk = document.createElement("canvas");
 const STABIEL_NODIG = 4;      // zoveel keer na elkaar op dezelfde plek gevonden: dan pas vragen
 const LEES_MS = 500;          // zo vaak de letters lezen als het bord vastligt
-const STEMMEN = 5, STEMMEN_NODIG = 3;   // een letter telt pas als hij 3 van de laatste 5 keer gelezen werd
+const STEMMEN = 5, STEMMEN_NODIG = 3;
+const RUSTIG = 4;             // een fout woord pas tonen als het 4 lezingen (2 s) niet meer veranderde   // een letter telt pas als hij 3 van de laatste 5 keer gelezen werd
 const vol = document.createElement("canvas");   // camerabeeld op volle grootte, om de letters te lezen
 const st = {
   cvKlaar: false, loopt: false, vast: false, hand: false,
@@ -31,7 +32,8 @@ function nieuwLezen() {
   st.lees = { laatst: 0, stemmen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
               kansen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
               letters: [...Array(N)].map(() => Array(N).fill(null)), woorden: [],
-              lezingen: 0,
+              lezingen: 0, opwarmen: !spel.basis,   // nieuw spel: eerst rustig alles lezen wat er al ligt
+              sinds: [...Array(N)].map(() => Array(N).fill(0)),   // hoeveel lezingen dit vakje al hetzelfde is
               jokerKeuze: {},     // "r,c" -> letter die de speler voor de joker koos
               jokerVraag: null }; // { r, c, opties } als we moeten vragen welke letter de joker is
   toonJokerVraag();
@@ -110,9 +112,15 @@ function lus(t) {
     st.laatstGezocht = t;
     try { zoekBord(); } catch (e) { console.error(e); }
   }
-  if (st.vast && st.lees && window.Lezer && Lezer.klaar() && t - st.lees.laatst > LEES_MS) {
+  const leesNu = st.vast && st.lees && window.Lezer && Lezer.klaar() && t - st.lees.laatst > LEES_MS;
+  if ((st.vast || st.vraagt) && (t - volg.laatst > VOLG_MS || leesNu)) {
+    volg.laatst = t;
+    try { volgBord(t); } catch (e) { console.error(e); }
+  }
+  // lezen meteen na het volgen (zelfde beeld), en alleen als het beeld op dit moment rustig is
+  if (leesNu && st.vast && t - volg.bewogen > STIL_MS && volg.stap < 0.15 && !volg.kwijt) {
     st.lees.laatst = t;
-    try { leesLetters(); } catch (e) { console.error(e); }
+    try { leesLetters(); tekenRecht(); } catch (e) { console.error(e); }
   }
   teken();
   requestAnimationFrame(lus);
@@ -373,7 +381,12 @@ function zoekBord() {
   st.stabiel = gelijk.length;
   st.hoek = [0, 1, 2, 3].map(k => [0, 1].map(d => gelijk.reduce((t, h) => t + h[k][d], 0) / gelijk.length));
   st.score = keuze.sc;
-  if (st.stabiel >= STABIEL_NODIG) vraag();
+  if (st.stabiel >= STABIEL_NODIG) {
+    st.hoek = keuze.h;   // de laatste meting, niet het gemiddelde: vanaf hier volgen we het bord
+    // bord kwijt geweest midden in een spel: meteen weer vastzetten, zonder opnieuw te vragen
+    if (volg.terugzoeken) { volg.terugzoeken = false; bevestig(); zetStatus("Bord terug", "ok"); }
+    else vraag();
+  }
   else zetStatus("Mogelijk bord… even stil houden", "zoek");
 }
 
@@ -389,19 +402,22 @@ function isAfgewezen(h) {
 
 // ---------------------------------------------------------------- "Is dit het bord?"
 function vraag() {
-  st.vraagt = true;
+  st.vraagt = true; volgStart();   // tijdens de vraag het bord al volgen: de gsm beweegt intussen
   $("vraag").hidden = false; $("acties").hidden = true;
   zetStatus("Is dit het bord?", "ok");
   if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
 }
 
 function bevestig() {
+  const volgde = st.vraagt;
   st.vraagt = false; st.vast = true; nieuwLezen();
+  if (!volgde) volgStart();
   $("vraag").hidden = true; $("acties").hidden = false; $("recht").hidden = false;
   zetStatus("Letters lezen…", "ok");
 }
 
 function wijsAf() {
+  volgStop();
   if (st.hoek) st.afgewezen.push(st.hoek);
   st.vraagt = false; st.hoek = null; st.geschiedenis = []; st.stabiel = 0;
   $("vraag").hidden = true; $("acties").hidden = false;
@@ -409,12 +425,122 @@ function wijsAf() {
 }
 
 function opnieuwZoeken() {
+  volgStop(); volg.terugzoeken = false;
   st.vast = false; st.vraagt = false; st.hand = false; st.handPunten = [];
   st.hoek = null; st.geschiedenis = []; st.stabiel = 0; st.afgewezen = []; st.lees = null;
   $("jokervraag").hidden = true;
   $("vraag").hidden = true; $("acties").hidden = false; $("recht").hidden = true;
   $("hand").setAttribute("aria-pressed", "false"); $("hand").textContent = "Zelf aanduiden";
   zetStatus("Bord zoeken…", "zoek");
+}
+
+// ---------------------------------------------------------------- het bord volgen als de gsm beweegt
+// Hoekpunten (Shi-Tomasi) op het bord van beeld tot beeld volgen (Lucas-Kanade), daaruit de verschuiving van het
+// bord als homografie (RANSAC: wie niet meedoet, zoals een hand, telt niet). Af en toe het raster opnieuw inpassen
+// om kleine fouten niet te laten optellen. Bij beweging even niet lezen (wazig beeld).
+const VOLG_MS = 90, STIL_MS = 350, KWIJT_MS = 1500, PASSEN_MS = 700;
+const volg = { stap: 0, laatst: 0, vorig: null, punten: null, bewogen: 0, kwijt: 0, laatstGepast: 0, terugzoeken: false };
+
+function volgStart() {
+  volgStop();
+  volg.bewogen = 0; volg.kwijt = 0; volg.laatstGepast = performance.now();
+}
+function volgStop() {
+  if (volg.vorig) volg.vorig.delete();
+  if (volg.punten) volg.punten.delete();
+  volg.vorig = null; volg.punten = null;
+}
+
+function bordMasker(h, s, maat) {
+  const m = cv.Mat.zeros(maat.height, maat.width, cv.CV_8UC1);
+  const poly = cv.matFromArray(4, 1, cv.CV_32SC2, h.flat().map(v => Math.round(v * s)));
+  const pv = new cv.MatVector(); pv.push_back(poly);
+  cv.fillPoly(m, pv, new cv.Scalar(255));
+  poly.delete(); pv.delete();
+  return m;
+}
+
+function volgBord(t) {
+  const s = werkbeeld();
+  const src = cv.imread(werk), grijs = new cv.Mat();
+  cv.cvtColor(src, grijs, cv.COLOR_RGBA2GRAY);
+  src.delete();
+  const vakMaat = Math.hypot(st.hoek[1][0] - st.hoek[0][0], st.hoek[1][1] - st.hoek[0][1]) * s / N;
+  let gelukt = false;
+  if (volg.vorig && volg.punten && volg.punten.rows >= 12) {
+    const nieuw = new cv.Mat(), status = new cv.Mat(), fout = new cv.Mat();
+    cv.calcOpticalFlowPyrLK(volg.vorig, grijs, volg.punten, nieuw, status, fout, new cv.Size(21, 21), 3,
+      new cv.TermCriteria(cv.TermCriteria_COUNT + cv.TermCriteria_EPS, 20, 0.03));
+    const a = [], b = [];
+    for (let i = 0; i < status.rows; i++) {
+      if (!status.data[i]) continue;
+      a.push(volg.punten.data32F[2 * i], volg.punten.data32F[2 * i + 1]);
+      b.push(nieuw.data32F[2 * i], nieuw.data32F[2 * i + 1]);
+    }
+    if (a.length >= 24) {
+      const A = cv.matFromArray(a.length / 2, 1, cv.CV_32FC2, a), Bm = cv.matFromArray(b.length / 2, 1, cv.CV_32FC2, b);
+      const inl = new cv.Mat();
+      const H = cv.findHomography(A, Bm, cv.RANSAC, 2.0, inl);
+      let mee = 0; for (let i = 0; i < inl.rows; i++) mee += inl.data[i] ? 1 : 0;
+      if (!H.empty() && mee >= 12) {
+        const hk = cv.matFromArray(4, 1, cv.CV_32FC2, st.hoek.flat().map(v => v * s)), uit = new cv.Mat();
+        cv.perspectiveTransform(hk, uit, H);
+        const nh = [0, 1, 2, 3].map(k => [uit.data32F[2 * k] / s, uit.data32F[2 * k + 1] / s]);
+        const verschil = Math.max(...nh.map((p, k) => Math.hypot(p[0] - st.hoek[k][0], p[1] - st.hoek[k][1]))) * s;
+        if (verschil > 0.5 * vakMaat) volg.bewogen = t;   // snel bewogen: beeld wazig
+        volg.stap = verschil / vakMaat;
+        // houd alleen de punten die meedoen
+        const goed = [];
+        for (let i = 0; i < inl.rows; i++) if (inl.data[i]) goed.push(b[2 * i], b[2 * i + 1]);
+        volg.punten.delete(); volg.punten = cv.matFromArray(goed.length / 2, 1, cv.CV_32FC2, goed);
+        st.hoek = nh; gelukt = true;
+        if (volg.log) volg.log.push([Math.round(t), a.length / 2, mee, +verschil.toFixed(1)]);
+        hk.delete(); uit.delete();
+      }
+      [A, Bm, inl, H].forEach(m => m.delete());
+    }
+    [nieuw, status, fout].forEach(m => m.delete());
+  }
+  // stilstaand: af en toe het raster opnieuw precies inpassen (houdt het kader recht op de lijnen)
+  if (volg.passen !== false && t - volg.laatstGepast > PASSEN_MS) {
+    volg.laatstGepast = t;
+    let r = vindRaster(grijs, st.hoek.map(([x, y]) => [x * s, y * s]), FIJN);
+    if (r.sc >= 12) r = vindRaster(grijs, r.h, HEEL_FIJN);
+    if (r.sc >= 12) {
+      const nh = r.h.map(([x, y]) => [x / s, y / s]);
+      const verschil = Math.max(...nh.map((p, k) => Math.hypot(p[0] - st.hoek[k][0], p[1] - st.hoek[k][1]))) * s;
+      if (verschil < 0.35 * vakMaat) { st.hoek = nh; gelukt = gelukt || !volg.vorig; }
+    }
+  }
+  // nieuwe punten zoeken als er te weinig over zijn
+  if (!volg.punten || volg.punten.rows < 60) {
+    const m = bordMasker(st.hoek, s, grijs.size()), p = new cv.Mat();
+    cv.goodFeaturesToTrack(grijs, p, 250, 0.01, 7, m, 5);
+    if (volg.punten) volg.punten.delete();
+    volg.punten = p; m.delete();
+    if (!volg.vorig) gelukt = true;
+  }
+  if (volg.vorig) volg.vorig.delete();
+  volg.vorig = grijs;
+  if (gelukt) {
+    if (volg.kwijt) zetStatus("Letters lezen…", "ok");
+    volg.kwijt = 0;
+  } else {
+    if (!volg.kwijt) volg.kwijt = t;
+    zetStatus("Bord kwijt… richt de camera op het bord", "zoek");
+    if (t - volg.kwijt > KWIJT_MS && st.vraagt) {
+      // tijdens de vraag kwijtgeraakt: gewoon verder zoeken
+      volgStop(); st.vraagt = false; st.hoek = null; st.geschiedenis = []; st.stabiel = 0; volg.kwijt = 0;
+      $("vraag").hidden = true; $("acties").hidden = false;
+      zetStatus("Bord zoeken…", "zoek");
+    } else if (t - volg.kwijt > KWIJT_MS) {
+      // terug zoeken; het spel (punten, wat er lag) blijft bewaard
+      volgStop();
+      st.vast = false; st.hoek = null; st.geschiedenis = []; st.stabiel = 0;
+      volg.terugzoeken = true; volg.kwijt = 0;
+      zetStatus("Bord zoeken…", "zoek");
+    }
+  }
 }
 
 // ---------------------------------------------------------------- letters lezen en woorden nakijken
@@ -445,6 +571,7 @@ function verwerkLezing(gelezen) {
     for (const [k, n] of Object.entries(tel)) if (k !== "." && n >= STEMMEN_NODIG) beste = k;
     // een letter die er al lag, blijft liggen tot hij duidelijk weg is
     if (!beste && L.letters[r][c] && (tel["."] || 0) < STEMMEN_NODIG) beste = L.letters[r][c];
+    L.sinds[r][c] = beste === L.letters[r][c] ? L.sinds[r][c] + 1 : 0;
     L.letters[r][c] = beste;
   }
   const wb = window.woordenboek;
@@ -453,11 +580,25 @@ function verwerkLezing(gelezen) {
   L.getoond = letters;
   L.woorden = Lezer.woorden(letters).map(w => ({ ...w, woord: w.woord.toUpperCase(),
     geldig: !(wb && wb.klaar()) ? null : w.woord.includes("?") ? (L.jokerVraag ? null : false) : wb.bestaat(w.woord) }));
+  // pas "fout" zeggen als het woord en zijn uiteinden een tijdje niet meer veranderd zijn (anders: nog aan het lezen)
+  const rustig = (r, c) => r < 0 || c < 0 || r >= N || c >= N || L.sinds[r][c] >= RUSTIG;
+  for (const w of L.woorden) {
+    if (w.geldig !== false) continue;
+    const [r0, c0] = w.cellen[0], [r1, c1] = w.cellen[w.cellen.length - 1];
+    const ends = w.horiz ? [[r0, c0 - 1], [r1, c1 + 1]] : [[r0 - 1, c0], [r1 + 1, c1]];
+    if (!w.cellen.every(([r, c]) => rustig(r, c)) || !ends.every(([r, c]) => rustig(r, c))) w.geldig = null;
+  }
   toonJokerVraag();
-  if (L.lezingen >= STEMMEN) volgZetten(letters);
+  if (L.opwarmen) {
+    // alles wat er in de eerste seconden verschijnt, lag er al: hoort bij het begin, telt niet als zet
+    if (!spel.basis) spel.basis = letters.map(r => r.map(() => null));
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (letters[r][c] && letters[r][c] !== "?") spel.basis[r][c] = letters[r][c];
+    if (L.lezingen >= STEMMEN + RUSTIG + 2) L.opwarmen = false;
+  } else if (L.lezingen >= STEMMEN) volgZetten(letters);
   toonScores();
   const fout = L.woorden.filter(w => w.geldig === false);
   if (spel.melding && performance.now() < spel.melding.tot) zetStatus(spel.melding.tekst, "ok");
+  else if (L.lezingen < STEMMEN + RUSTIG) zetStatus("Letters lezen…", "ok");
   else if (!L.woorden.length) zetStatus("Geen woorden gevonden", "ok");
   else if (fout.length) zetStatus(fout.length === 1 ? `Fout woord: ${fout[0].woord}` : `${fout.length} foute woorden: ${fout.map(w => w.woord).join(", ")}`, "fout");
   else zetStatus(`${L.woorden.length} ${L.woorden.length === 1 ? "woord" : "woorden"} · alles klopt`, "ok");
@@ -685,7 +826,6 @@ function teken() {
     [[k, r], [k + 1, r], [k + 1, r + 1], [k, r + 1]].forEach(([u, v], i) => { const p = punt(u / N, v / N); i ? c.lineTo(...p) : c.moveTo(...p); });
     c.closePath(); c.stroke();
   }
-  if (st.vast) tekenRecht();
 }
 
 function tekenWoorden(c, punt, lijn) {
@@ -829,7 +969,7 @@ over.addEventListener("pointerdown", e => {
   st.handPunten.push([x, y]);
   if (st.handPunten.length === 4) {
     st.hoek = ordenHoeken(st.handPunten);
-    st.hand = false; st.vast = true; st.handPunten = []; nieuwLezen();
+    st.hand = false; st.vast = true; st.handPunten = []; nieuwLezen(); volgStart();
     $("hand").setAttribute("aria-pressed", "false"); $("hand").textContent = "Zelf aanduiden";
     $("recht").hidden = false;
     zetStatus("Letters lezen…", "ok");
@@ -837,6 +977,7 @@ over.addEventListener("pointerdown", e => {
 });
 
 // voor het testen: toestand opvragen, en één stilstaand beeld lezen (zonder stemmen)
+window.scrabbleVolg = volg;
 window.scrabbleSpel = () => ({ stand: spel.spelers.map((n, i) => stand(i)), aanBeurt: spel.aanBeurt,
   zetten: spel.zetten.map(z => ({ speler: z.speler, woorden: z.woorden, bonus: z.bonus, punten: z.punten })) });
 window.scrabbleLees = () => st.lees && ({ letters: (st.lees.getoond || st.lees.letters).map(r => r.map(l => l || ".").join("")), woorden: st.lees.woorden.map(w => w.woord + (w.geldig === false ? "!" : "")) });
