@@ -72,6 +72,8 @@
   .greep { width: 32px; height: 44px; display: grid; place-items: center; color: var(--grijs); cursor: grab;
            touch-action: none; user-select: none; -webkit-user-select: none; font-size: 18px; letter-spacing: -2px; }
   li.sleep .greep { cursor: grabbing; color: var(--wit); }
+  #verder + .uitleg { margin-top: -8px; }
+  #verder:not([hidden]) ~ #nieuwSpel { background: var(--glas); color: var(--wit); }
   .uitleg { margin: -10px 0 0; font-size: 13px; color: var(--grijs); text-align: center; }
   #spelerLijst input { flex: 1; min-width: 0; font: 16px var(--letter); color: var(--wit); background: rgba(255,255,255,0.08);
                        border: 1px solid rgba(255,255,255,0.14); border-radius: 12px; padding: 12px 14px; outline: none; }
@@ -91,6 +93,8 @@
   <div id="menu">
     <section id="welkom" class="scherm">
       <h1>Scrabble</h1>
+      <button class="hoofd" id="verder" hidden>Verder spelen</button>
+      <p class="uitleg" id="verderStand" hidden></p>
       <button class="hoofd" id="nieuwSpel">Start spel</button>
     </section>
     <section id="spelersScherm" class="scherm" hidden>
@@ -138,6 +142,6 @@
   </div>
 <script src="woordenboek.js?v=1"></script>
 <script src="lezer.js?v=2"></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

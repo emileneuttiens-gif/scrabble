@@ -92,6 +92,7 @@ async function start() {
     return;
   }
   $("startvak").hidden = true;
+  houdSchermAan();
   over.width = video.videoWidth; over.height = video.videoHeight;
   $("opnieuw").disabled = false; $("hand").disabled = false;
   $("acties").hidden = false;
@@ -104,6 +105,32 @@ async function start() {
   st.loopt = true;
   requestAnimationFrame(lus);
 }
+
+// ---------------------------------------------------------------- scherm aanhouden
+// Zonder dit dooft de gsm na een minuut of twee het scherm en stopt de camera. Het slot vervalt als de pagina
+// even niet zichtbaar is, dus vragen we het opnieuw als je terugkomt; de camera starten we dan zo nodig opnieuw.
+let schermSlot = null;
+async function houdSchermAan() {
+  try {
+    if (!("wakeLock" in navigator) || (schermSlot && !schermSlot.released)) return;
+    schermSlot = await navigator.wakeLock.request("screen");
+  } catch (e) { /* geweigerd of niet ondersteund: dan maar niet */ }
+}
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || !st.loopt) return;
+  houdSchermAan();
+  const spoor = video.srcObject && video.srcObject.getVideoTracks()[0];
+  if (!spoor || spoor.readyState === "ended" || spoor.muted) {
+    // camera is gestopt terwijl de pagina weg was: opnieuw starten, het spel blijft
+    try {
+      const stroom = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+      video.srcObject = stroom; await video.play();
+      volgStop(); if (st.vast) volgStart();
+    } catch (e) { toonFout("De camera start niet opnieuw. Tik op Opnieuw zoeken of herlaad de pagina; je spel is bewaard."); }
+  } else if (video.paused) { try { await video.play(); } catch (e) {} }
+});
 
 // ---------------------------------------------------------------- hoofdlus
 function lus(t) {
@@ -854,12 +881,30 @@ function volgZetten(letters) {
 
 function stand(i) { return spel.zetten.filter(z => z.speler === i).reduce((s, z) => s + z.punten, 0); }
 
+// ---- het spel bewaren op de gsm, zodat herladen of een gesloten browser niets kost
+const BEWAAR = "scrabbleSpel";
+function bewaarSpel() {
+  try {
+    localStorage.setItem(BEWAAR, JSON.stringify({ tijd: Date.now(), spelers: spel.spelers, zetten: spel.zetten,
+      basis: spel.basis, aanBeurt: spel.aanBeurt }));
+  } catch (e) {}
+}
+function bewaardSpel() {
+  try {
+    const b = JSON.parse(localStorage.getItem(BEWAAR) || "null");
+    if (!b || !Array.isArray(b.spelers) || !Array.isArray(b.zetten)) return null;
+    if (Date.now() - b.tijd > 3 * 24 * 3600 * 1000) return null;   // ouder dan 3 dagen: vergeten
+    return b;
+  } catch (e) { return null; }
+}
+
 function toonScores() {
   const vak = $("scores");
   vak.hidden = !st.vast;
-  const sleutel = spel.spelers.map((n, i) => `${n}:${stand(i)}`).join("|") + spel.aanBeurt;
+  const sleutel = spel.spelers.map((n, i) => `${n}:${stand(i)}`).join("|") + spel.aanBeurt + ":" + spel.zetten.length;
   if (vak.dataset.sleutel === sleutel) return;
   vak.dataset.sleutel = sleutel;
+  bewaarSpel();
   vak.textContent = "";
   spel.spelers.forEach((naam, i) => {
     const b = document.createElement("button");
@@ -1143,10 +1188,30 @@ $("begin").addEventListener("click", () => {
   const namen = [...$("spelerLijst").querySelectorAll("input")].map((x, i) => x.value.trim() || `Speler ${i + 1}`);
   try { localStorage.setItem("scrabbleSpelers", JSON.stringify(namen)); } catch (e) {}
   spel.spelers = namen; spel.zetten = []; spel.aanBeurt = 0; spel.basis = null; spel.kandidaat = null; spel.melding = null;
+  bewaarSpel();
   $("scores").dataset.sleutel = "";
   $("menu").hidden = true; $("status").hidden = false;
   start();
 });
+
+// verder spelen met een bewaard spel
+(() => {
+  const b = bewaardSpel();
+  if (!b) return;
+  const stand = b.spelers.map((n, i) => `${n} ${b.zetten.filter(z => z.speler === i).reduce((t, z) => t + z.punten, 0)}`);
+  $("verder").hidden = false;
+  $("verderStand").hidden = false;
+  $("verderStand").textContent = `${stand.join(" · ")} · ${b.zetten.length} ${b.zetten.length === 1 ? "zet" : "zetten"}`;
+  $("nieuwSpel").textContent = "Nieuw spel";
+  $("verder").addEventListener("click", () => {
+    spel.spelers = b.spelers; spel.zetten = b.zetten; spel.basis = b.basis; spel.aanBeurt = b.aanBeurt || 0;
+    spel.kandidaat = null;
+    spel.melding = { tekst: "Spel hervat", tot: performance.now() + 4000 };
+    $("scores").dataset.sleutel = "";
+    $("menu").hidden = true; $("status").hidden = false;
+    start();
+  });
+})();
 
 $("opnieuw").addEventListener("click", opnieuwZoeken);
 $("terug").addEventListener("click", zetTerug);
