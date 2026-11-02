@@ -27,7 +27,10 @@ const st = {
 function nieuwLezen() {
   st.lees = { laatst: 0, stemmen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
               kansen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
-              letters: [...Array(N)].map(() => Array(N).fill(null)), woorden: [] };
+              letters: [...Array(N)].map(() => Array(N).fill(null)), woorden: [],
+              jokerKeuze: {},     // "r,c" -> letter die de speler voor de joker koos
+              jokerVraag: null }; // { r, c, opties } als we moeten vragen welke letter de joker is
+  toonJokerVraag();
 }
 
 function zetStatus(tekst, soort) {
@@ -403,6 +406,7 @@ function wijsAf() {
 function opnieuwZoeken() {
   st.vast = false; st.vraagt = false; st.hand = false; st.handPunten = [];
   st.hoek = null; st.geschiedenis = []; st.stabiel = 0; st.afgewezen = []; st.lees = null;
+  $("jokervraag").hidden = true;
   $("vraag").hidden = true; $("acties").hidden = false; $("recht").hidden = true;
   $("hand").setAttribute("aria-pressed", "false"); $("hand").textContent = "Zelf aanduiden";
   zetStatus("Bord zoeken…", "zoek");
@@ -439,9 +443,11 @@ function verwerkLezing(gelezen) {
   }
   const wb = window.woordenboek;
   const letters = L.letters.map(r => r.slice());
-  if (wb && wb.klaar()) verbeterMetWoordenlijst(letters, L.kansen, wb);
+  if (wb && wb.klaar()) { verbeterMetWoordenlijst(letters, L.kansen, wb); vulJokersIn(letters, wb); }
   L.getoond = letters;
-  L.woorden = Lezer.woorden(letters).map(w => ({ ...w, geldig: wb && wb.klaar() ? wb.bestaat(w.woord) : null }));
+  L.woorden = Lezer.woorden(letters).map(w => ({ ...w, woord: w.woord.toUpperCase(),
+    geldig: !(wb && wb.klaar()) ? null : w.woord.includes("?") ? (L.jokerVraag ? null : false) : wb.bestaat(w.woord) }));
+  toonJokerVraag();
   const fout = L.woorden.filter(w => w.geldig === false);
   if (!L.woorden.length) zetStatus("Geen woorden gevonden", "ok");
   else if (fout.length) zetStatus(fout.length === 1 ? `Fout woord: ${fout[0].woord}` : `${fout.length} foute woorden: ${fout.map(w => w.woord).join(", ")}`, "fout");
@@ -452,9 +458,9 @@ function verbeterMetWoordenlijst(letters, kansen, wb) {
   // Een fout woord kan ook een verkeerd gelezen letter zijn (J of I, E of B, ...). Als de tweede keus van het netje
   // in één vakje het woord (en het woord dat er dwars door loopt) wel laat bestaan, nemen we die.
   const klassen = Lezer.klassen();
-  const allesGoed = (r, c) => Lezer.woorden(letters).filter(w => w.cellen.some(([a, b]) => a === r && b === c)).every(w => wb.bestaat(w.woord));
+  const allesGoed = (r, c) => Lezer.woorden(letters).filter(w => w.cellen.some(([a, b]) => a === r && b === c)).every(w => w.woord.includes("?") || wb.bestaat(w.woord));
   for (const w of Lezer.woorden(letters)) {
-    if (wb.bestaat(w.woord)) continue;
+    if (w.woord.includes("?") || wb.bestaat(w.woord)) continue;
     let opgelost = false;
     for (const [r, c] of w.cellen) {
       const reeks = kansen[r][c].filter(Boolean);
@@ -470,6 +476,69 @@ function verbeterMetWoordenlijst(letters, kansen, wb) {
       letters[r][c] = was;
     }
   }
+}
+
+// ---------------------------------------------------------------- jokers
+// Een joker heeft geen letter. We vullen de letter in die alle woorden door dat vakje laat bestaan.
+// Past er maar één: die nemen we. Passen er meerdere: we vragen het. Een joker wordt als kleine letter bijgehouden (0 punten).
+const ABC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+function vulJokersIn(letters, wb) {
+  const L = st.lees;
+  const jokers = [];
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (letters[r][c] === "?") jokers.push([r, c]);
+  // keuzes van jokers die er niet meer liggen vergeten
+  for (const k of Object.keys(L.jokerKeuze)) if (!jokers.some(([r, c]) => `${r},${c}` === k)) delete L.jokerKeuze[k];
+  for (const [r, c] of jokers) if (L.jokerKeuze[`${r},${c}`]) letters[r][c] = L.jokerKeuze[`${r},${c}`].toLowerCase();
+  let vraag = null;
+  const gedaan = new Set();
+  for (const [r, c] of jokers) {
+    if (letters[r][c] !== "?" || gedaan.has(`${r},${c}`)) continue;
+    // groepje jokers die naast elkaar liggen (meestal 1, hoogstens 2 in een spel)
+    const groep = [[r, c]];
+    for (const [a, b] of [[r, c + 1], [r + 1, c], [r, c - 1], [r - 1, c]])
+      if (a >= 0 && b >= 0 && a < N && b < N && letters[a][b] === "?" && groep.length < 2) groep.push([a, b]);
+    groep.forEach(([a, b]) => gedaan.add(`${a},${b}`));
+    const raakt = w => w.cellen.some(([a, b]) => groep.some(([x, y]) => x === a && y === b));
+    const opties = [];
+    const probeer = k => {
+      if (k === groep.length) {
+        const ws = Lezer.woorden(letters).filter(raakt);
+        if (ws.every(w => w.woord.includes("?") || wb.bestaat(w.woord))) opties.push(groep.map(([a, b]) => letters[a][b].toUpperCase()).join(""));
+        return;
+      }
+      const [a, b] = groep[k];
+      for (const l of ABC) { letters[a][b] = l.toLowerCase(); probeer(k + 1); }
+      letters[a][b] = "?";
+    };
+    probeer(0);
+    if (opties.length === 1) groep.forEach(([a, b], i) => { letters[a][b] = opties[0][i].toLowerCase(); });
+    else if (opties.length > 1 && !vraag) {
+      // vragen voor het eerste vakje van het groepje; de rest volgt daarna vanzelf
+      vraag = { r: groep[0][0], c: groep[0][1], opties: [...new Set(opties.map(o => o[0]))] };
+    }
+  }
+  L.jokerVraag = vraag;
+}
+
+function toonJokerVraag() {
+  const v = st.lees && st.lees.jokerVraag;
+  const vak = $("jokervraag");
+  if (!v || st.vraagt) { vak.hidden = true; vak.dataset.sleutel = ""; return; }
+  const sleutel = `${v.r},${v.c}:${v.opties.join("")}`;
+  if (vak.dataset.sleutel === sleutel && !vak.hidden) return;
+  vak.dataset.sleutel = sleutel;
+  const knoppen = $("jokeropties");
+  knoppen.textContent = "";
+  for (const l of v.opties) {
+    const b = document.createElement("button");
+    b.className = "letter"; b.textContent = l;
+    b.addEventListener("click", () => {
+      st.lees.jokerKeuze[`${v.r},${v.c}`] = l;
+      st.lees.jokerVraag = null; vak.hidden = true; vak.dataset.sleutel = "";
+    });
+    knoppen.appendChild(b);
+  }
+  vak.hidden = false;
 }
 
 // ---------------------------------------------------------------- tekenen
@@ -501,6 +570,13 @@ function teken() {
   }
   c.stroke(); c.globalAlpha = 1;
   if (st.vast && st.lees) tekenWoorden(c, punt, lijn);
+  if (st.vast && st.lees && st.lees.jokerVraag) {
+    // het vakje van de joker waarover we iets vragen, geel
+    const { r, c: k } = st.lees.jokerVraag;
+    c.strokeStyle = "#ffd84d"; c.lineWidth = lijn * 1.2; c.beginPath();
+    [[k, r], [k + 1, r], [k + 1, r + 1], [k, r + 1]].forEach(([u, v], i) => { const p = punt(u / N, v / N); i ? c.lineTo(...p) : c.moveTo(...p); });
+    c.closePath(); c.stroke();
+  }
   if (st.vast) tekenRecht();
 }
 
@@ -555,8 +631,9 @@ function tekenRecht() {
     for (let r = 0; r < N; r++) for (let k = 0; k < N; k++) {
       const l = (st.lees.getoond || st.lees.letters)[r][k];
       if (!l) continue;
-      c.fillStyle = "rgba(0,0,0,0.72)"; c.fillRect(k * v + 1, r * v + 1, v - 2, v - 2);
-      c.fillStyle = "#ffe08a"; c.fillText(l, k * v + v / 2, r * v + v / 2 + 1);
+      const joker = l === "?" || l !== l.toUpperCase();
+      c.fillStyle = joker ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.72)"; c.fillRect(k * v + 1, r * v + 1, v - 2, v - 2);
+      c.fillStyle = joker ? "#333" : "#ffe08a"; c.fillText(l.toUpperCase(), k * v + v / 2, r * v + v / 2 + 1);
     }
   }
 }

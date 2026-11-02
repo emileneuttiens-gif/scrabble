@@ -50,6 +50,7 @@
 
   .vraag { display: grid; justify-items: center; gap: 12px; }
   .vraag p { margin: 0; font-size: 18px; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+  button.letter { width: 44px; height: 44px; padding: 0; font-size: 18px; border-radius: 10px; background: var(--wit); color: #000; }
   .rij { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
   #recht { position: fixed; z-index: 4; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
@@ -81,13 +82,18 @@
       </div>
     </div>
 
+    <div class="vraag" id="jokervraag" hidden>
+      <p>Welke letter is de joker?</p>
+      <div class="rij" id="jokeropties"></div>
+    </div>
+
     <div class="rij" id="acties" hidden>
       <button class="stil" id="hand" aria-pressed="false">Zelf aanduiden</button>
       <button class="stil" id="opnieuw" disabled>Opnieuw zoeken</button>
     </div>
   </div>
 <script src="woordenboek.js?v=1"></script>
-<script src="lezer.js?v=1"></script>
-<script src="app.js?v=7"></script>
+<script src="lezer.js?v=2"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
