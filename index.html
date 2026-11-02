@@ -30,11 +30,13 @@
 
   #status { position: fixed; z-index: 5; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 50%; transform: translateX(-50%);
             padding: 6px 14px; border-radius: 999px; background: var(--glas); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-            font-size: 13px; color: var(--grijs); white-space: nowrap; }
+            font-size: 13px; color: var(--grijs); white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
   #status::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; background: var(--grijs); }
   #status.zoek::before { background: var(--oranje); }
   #status.ok { color: var(--wit); }
   #status.ok::before { background: var(--groen); }
+  #status.fout { color: var(--wit); }
+  #status.fout::before { background: #ff5a4f; }
 
   .onder { position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; display: grid; justify-items: center; gap: 12px;
            padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 20px) max(16px, env(safe-area-inset-left, 0px)); }
@@ -85,6 +87,7 @@
     </div>
   </div>
 <script src="woordenboek.js?v=1"></script>
-<script src="app.js?v=6"></script>
+<script src="lezer.js?v=1"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

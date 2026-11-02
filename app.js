@@ -12,13 +12,23 @@ const $ = id => document.getElementById(id);
 const video = $("video"), over = $("over"), recht = $("recht");
 const werk = document.createElement("canvas");
 const STABIEL_NODIG = 4;      // zoveel keer na elkaar op dezelfde plek gevonden: dan pas vragen
+const LEES_MS = 500;          // zo vaak de letters lezen als het bord vastligt
+const STEMMEN = 5, STEMMEN_NODIG = 3;   // een letter telt pas als hij 3 van de laatste 5 keer gelezen werd
+const vol = document.createElement("canvas");   // camerabeeld op volle grootte, om de letters te lezen
 const st = {
   cvKlaar: false, loopt: false, vast: false, hand: false,
   vraagt: false,         // de vraag "Is dit het bord?" staat open
   afgewezen: [],         // kaders waarop "Nee" gezegd werd: niet opnieuw voorstellen
   hoek: null,            // 4 hoeken van het speelveld in videopixels [[x,y] x4]: lb, rb, ro, lo
   geschiedenis: [], stabiel: 0, laatstGezocht: 0, handPunten: [],
+  lees: null,            // { laatst, stemmen[r][c] = [...], letters[r][c], woorden }
 };
+
+function nieuwLezen() {
+  st.lees = { laatst: 0, stemmen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
+              kansen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
+              letters: [...Array(N)].map(() => Array(N).fill(null)), woorden: [] };
+}
 
 function zetStatus(tekst, soort) {
   const s = $("status");
@@ -91,6 +101,10 @@ function lus(t) {
   if (!st.vast && !st.hand && !st.vraagt && t - st.laatstGezocht > ZOEK_MS) {
     st.laatstGezocht = t;
     try { zoekBord(); } catch (e) { console.error(e); }
+  }
+  if (st.vast && st.lees && window.Lezer && Lezer.klaar() && t - st.lees.laatst > LEES_MS) {
+    st.lees.laatst = t;
+    try { leesLetters(); } catch (e) { console.error(e); }
   }
   teken();
   requestAnimationFrame(lus);
@@ -374,9 +388,9 @@ function vraag() {
 }
 
 function bevestig() {
-  st.vraagt = false; st.vast = true;
+  st.vraagt = false; st.vast = true; nieuwLezen();
   $("vraag").hidden = true; $("acties").hidden = false; $("recht").hidden = false;
-  zetStatus("Bord vastgezet", "ok");
+  zetStatus("Letters lezen…", "ok");
 }
 
 function wijsAf() {
@@ -388,10 +402,74 @@ function wijsAf() {
 
 function opnieuwZoeken() {
   st.vast = false; st.vraagt = false; st.hand = false; st.handPunten = [];
-  st.hoek = null; st.geschiedenis = []; st.stabiel = 0; st.afgewezen = [];
+  st.hoek = null; st.geschiedenis = []; st.stabiel = 0; st.afgewezen = []; st.lees = null;
   $("vraag").hidden = true; $("acties").hidden = false; $("recht").hidden = true;
   $("hand").setAttribute("aria-pressed", "false"); $("hand").textContent = "Zelf aanduiden";
   zetStatus("Bord zoeken…", "zoek");
+}
+
+// ---------------------------------------------------------------- letters lezen en woorden nakijken
+function leesLetters() {
+  vol.width = video.videoWidth; vol.height = video.videoHeight;
+  const ctx = vol.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0);
+  const beeld = cv.imread(vol);
+  const gelezen = Lezer.leesBord(beeld, st.hoek);
+  beeld.delete();
+  if (gelezen) verwerkLezing(gelezen);
+}
+
+function verwerkLezing(gelezen) {
+  const L = st.lees;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const v = L.stemmen[r][c];
+    const g = gelezen[r][c];
+    v.push(g && g.p >= 0.6 ? g.letter : null);
+    if (v.length > STEMMEN) v.shift();
+    const kv = L.kansen[r][c];
+    kv.push(g ? g.kansen : null);
+    if (kv.length > STEMMEN) kv.shift();
+    const tel = {};
+    v.forEach(l => { const k = l || "."; tel[k] = (tel[k] || 0) + 1; });
+    let beste = null;
+    for (const [k, n] of Object.entries(tel)) if (k !== "." && n >= STEMMEN_NODIG) beste = k;
+    // een letter die er al lag, blijft liggen tot hij duidelijk weg is
+    if (!beste && L.letters[r][c] && (tel["."] || 0) < STEMMEN_NODIG) beste = L.letters[r][c];
+    L.letters[r][c] = beste;
+  }
+  const wb = window.woordenboek;
+  const letters = L.letters.map(r => r.slice());
+  if (wb && wb.klaar()) verbeterMetWoordenlijst(letters, L.kansen, wb);
+  L.getoond = letters;
+  L.woorden = Lezer.woorden(letters).map(w => ({ ...w, geldig: wb && wb.klaar() ? wb.bestaat(w.woord) : null }));
+  const fout = L.woorden.filter(w => w.geldig === false);
+  if (!L.woorden.length) zetStatus("Geen woorden gevonden", "ok");
+  else if (fout.length) zetStatus(fout.length === 1 ? `Fout woord: ${fout[0].woord}` : `${fout.length} foute woorden: ${fout.map(w => w.woord).join(", ")}`, "fout");
+  else zetStatus(`${L.woorden.length} ${L.woorden.length === 1 ? "woord" : "woorden"} · alles klopt`, "ok");
+}
+
+function verbeterMetWoordenlijst(letters, kansen, wb) {
+  // Een fout woord kan ook een verkeerd gelezen letter zijn (J of I, E of B, ...). Als de tweede keus van het netje
+  // in één vakje het woord (en het woord dat er dwars door loopt) wel laat bestaan, nemen we die.
+  const klassen = Lezer.klassen();
+  const allesGoed = (r, c) => Lezer.woorden(letters).filter(w => w.cellen.some(([a, b]) => a === r && b === c)).every(w => wb.bestaat(w.woord));
+  for (const w of Lezer.woorden(letters)) {
+    if (wb.bestaat(w.woord)) continue;
+    let opgelost = false;
+    for (const [r, c] of w.cellen) {
+      const reeks = kansen[r][c].filter(Boolean);
+      if (!reeks.length) continue;
+      const gem = klassen.split("").map((k, i) => [k, reeks.reduce((s, p) => s + p[i], 0) / kansen[r][c].length]);
+      const alt = gem.filter(([k, p]) => k !== "-" && k !== letters[r][c] && p >= 0.05).sort((a, b) => b[1] - a[1]);
+      const was = letters[r][c];
+      for (const [k] of alt) {
+        letters[r][c] = k;
+        if (allesGoed(r, c)) { opgelost = true; break; }
+      }
+      if (opgelost) break;
+      letters[r][c] = was;
+    }
+  }
 }
 
 // ---------------------------------------------------------------- tekenen
@@ -422,7 +500,22 @@ function teken() {
     a = punt(0, u); b = punt(1, u); c.moveTo(...a); c.lineTo(...b);
   }
   c.stroke(); c.globalAlpha = 1;
+  if (st.vast && st.lees) tekenWoorden(c, punt, lijn);
   if (st.vast) tekenRecht();
+}
+
+function tekenWoorden(c, punt, lijn) {
+  // elk woord omlijnd: groen = bestaat, rood = bestaat niet
+  for (const w of st.lees.woorden) {
+    const [r0, c0] = w.cellen[0], [r1, c1] = w.cellen[w.cellen.length - 1];
+    const k = 0.08;
+    const u0 = (c0 + k) / N, u1 = (c1 + 1 - k) / N, v0 = (r0 + k) / N, v1 = (r1 + 1 - k) / N;
+    c.strokeStyle = w.geldig === false ? "#ff5a4f" : w.geldig ? "#7fd18b" : "#cccccc";
+    c.lineWidth = w.geldig === false ? lijn * 1.1 : lijn * 0.7;
+    c.beginPath();
+    [[u0, v0], [u1, v0], [u1, v1], [u0, v1]].forEach(([u, v], i) => { const p = punt(u, v); i ? c.lineTo(...p) : c.moveTo(...p); });
+    c.closePath(); c.stroke();
+  }
 }
 
 function perspectief(h) {
@@ -455,6 +548,17 @@ function tekenRecht() {
     c.moveTo(p, 0); c.lineTo(p, RECHT); c.moveTo(0, p); c.lineTo(RECHT, p);
   }
   c.stroke();
+  // gelezen letters op het kleine bord
+  if (st.lees) {
+    const v = RECHT / N;
+    c.font = `700 ${Math.round(v * 0.62)}px system-ui, sans-serif`; c.textAlign = "center"; c.textBaseline = "middle";
+    for (let r = 0; r < N; r++) for (let k = 0; k < N; k++) {
+      const l = (st.lees.getoond || st.lees.letters)[r][k];
+      if (!l) continue;
+      c.fillStyle = "rgba(0,0,0,0.72)"; c.fillRect(k * v + 1, r * v + 1, v - 2, v - 2);
+      c.fillStyle = "#ffe08a"; c.fillText(l, k * v + v / 2, r * v + v / 2 + 1);
+    }
+  }
 }
 
 // ---------------------------------------------------------------- knoppen
@@ -485,12 +589,24 @@ over.addEventListener("pointerdown", e => {
   st.handPunten.push([x, y]);
   if (st.handPunten.length === 4) {
     st.hoek = ordenHoeken(st.handPunten);
-    st.hand = false; st.vast = true; st.handPunten = [];
+    st.hand = false; st.vast = true; st.handPunten = []; nieuwLezen();
     $("hand").setAttribute("aria-pressed", "false"); $("hand").textContent = "Zelf aanduiden";
     $("recht").hidden = false;
-    zetStatus("Bord vastgezet", "ok");
+    zetStatus("Letters lezen…", "ok");
   }
 });
 
+// voor het testen: toestand opvragen, en één stilstaand beeld lezen (zonder stemmen)
+window.scrabbleLees = () => st.lees && ({ letters: (st.lees.getoond || st.lees.letters).map(r => r.map(l => l || ".").join("")), woorden: st.lees.woorden.map(w => w.woord + (w.geldig === false ? "!" : "")) });
+window.scrabbleLeesBeeld = async (url, hoek) => {
+  if (!st.cvKlaar) { await laadCv(); st.cvKlaar = true; }
+  await Lezer.laden;
+  const img = new Image(); img.src = url; await img.decode();
+  const cnv = document.createElement("canvas"); cnv.width = img.naturalWidth; cnv.height = img.naturalHeight;
+  cnv.getContext("2d").drawImage(img, 0, 0);
+  const m = cv.imread(cnv), t0 = performance.now();
+  const g = Lezer.leesBord(m, hoek); m.delete();
+  return { ms: Math.round(performance.now() - t0), letters: g.map(r => r.map(x => (x && x.p >= 0.6 ? x.letter : ".")).join("")) };
+};
 // voor het testen: toestand opvragen
 window.scrabbleToestand = () => ({ status: $("status").textContent, hoek: st.hoek, stabiel: st.stabiel, score: st.score, vast: st.vast, vraagt: st.vraagt, afgewezen: st.afgewezen.length });

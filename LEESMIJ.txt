@@ -5,6 +5,8 @@ Live camera die het Scrabblebord zoekt en rechtzet. Alles gebeurt op je gsm zelf
 Bestanden:
   index.html      de pagina
   app.js          het zoeken en rechtzetten van het bord
+  lezer.js        leest de letters op de stenen (klein neuraal netje)
+  letters-net.json  het netje, geleerd op nagemaakte stenen
   woordenboek.js  laadt de Nederlandse woordenlijst en kijkt woorden na
   woorden.txt     de woordenlijst (OpenTaal, BSD/CC BY 3.0, zie OPENTAAL-LICENSE.txt)
   opencv.js       OpenCV (beeldverwerking), Apache 2.0-licentie (zie OPENCV-LICENSE)
