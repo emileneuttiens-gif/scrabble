@@ -24,10 +24,14 @@ const st = {
   lees: null,            // { laatst, stemmen[r][c] = [...], letters[r][c], woorden }
 };
 
+// het spel: wat er al lag (basis), de zetten en de spelers. Blijft bestaan als het bord opnieuw gezocht wordt.
+const spel = { basis: null, zetten: [], spelers: ["Speler 1", "Speler 2"], aanBeurt: 0, kandidaat: null, melding: null };
+
 function nieuwLezen() {
   st.lees = { laatst: 0, stemmen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
               kansen: [...Array(N)].map(() => [...Array(N)].map(() => [])),
               letters: [...Array(N)].map(() => Array(N).fill(null)), woorden: [],
+              lezingen: 0,
               jokerKeuze: {},     // "r,c" -> letter die de speler voor de joker koos
               jokerVraag: null }; // { r, c, opties } als we moeten vragen welke letter de joker is
   toonJokerVraag();
@@ -425,6 +429,7 @@ function leesLetters() {
 
 function verwerkLezing(gelezen) {
   const L = st.lees;
+  L.lezingen++;
   for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
     const v = L.stemmen[r][c];
     const g = gelezen[r][c];
@@ -448,8 +453,11 @@ function verwerkLezing(gelezen) {
   L.woorden = Lezer.woorden(letters).map(w => ({ ...w, woord: w.woord.toUpperCase(),
     geldig: !(wb && wb.klaar()) ? null : w.woord.includes("?") ? (L.jokerVraag ? null : false) : wb.bestaat(w.woord) }));
   toonJokerVraag();
+  if (L.lezingen >= STEMMEN) volgZetten(letters);
+  toonScores();
   const fout = L.woorden.filter(w => w.geldig === false);
-  if (!L.woorden.length) zetStatus("Geen woorden gevonden", "ok");
+  if (spel.melding && performance.now() < spel.melding.tot) zetStatus(spel.melding.tekst, "ok");
+  else if (!L.woorden.length) zetStatus("Geen woorden gevonden", "ok");
   else if (fout.length) zetStatus(fout.length === 1 ? `Fout woord: ${fout[0].woord}` : `${fout.length} foute woorden: ${fout.map(w => w.woord).join(", ")}`, "fout");
   else zetStatus(`${L.woorden.length} ${L.woorden.length === 1 ? "woord" : "woorden"} · alles klopt`, "ok");
 }
@@ -476,6 +484,105 @@ function verbeterMetWoordenlijst(letters, kansen, wb) {
       letters[r][c] = was;
     }
   }
+}
+
+// ---------------------------------------------------------------- zetten volgen en punten tellen
+// Nederlandse letterwaarden (staan ook rechtsonder op de stenen). Een joker (kleine letter) is 0 waard.
+const WAARDE = { A: 1, B: 3, C: 5, D: 2, E: 1, F: 4, G: 3, H: 4, I: 1, J: 4, K: 3, L: 3, M: 3, N: 1, O: 1, P: 3, Q: 10,
+                 R: 2, S: 2, T: 2, U: 4, V: 4, W: 5, X: 8, Y: 8, Z: 4 };
+const ZET_STABIEL = 3;   // zoveel lezingen na elkaar dezelfde nieuwe stenen: dan pas is de zet gelegd
+
+function puntenVoorZet(letters, nieuw) {
+  // alleen de nieuwe stenen krijgen de premie van hun vakje; elk woord met minstens één nieuwe steen telt
+  const isNieuw = (r, c) => nieuw.some(([a, b]) => a === r && b === c);
+  const woorden = Lezer.woorden(letters).filter(w => w.cellen.some(([r, c]) => isNieuw(r, c)));
+  let totaal = 0;
+  const uit = woorden.map(w => {
+    let som = 0, maal = 1;
+    for (const [r, c] of w.cellen) {
+      const l = letters[r][c];
+      let v = l === l.toUpperCase() ? (WAARDE[l] || 0) : 0;
+      if (isNieuw(r, c)) {
+        const soort = Lezer.SOORT[r][c];
+        if (soort === 3) v *= 3; else if (soort === 4) v *= 2;
+        if (soort === 1) maal *= 3; else if (soort === 2 || soort === 5) maal *= 2;
+      }
+      som += v;
+    }
+    totaal += som * maal;
+    return { woord: w.woord.toUpperCase(), punten: som * maal };
+  });
+  const bonus = nieuw.length === 7 ? 50 : 0;
+  return { woorden: uit, bonus, punten: totaal + bonus };
+}
+
+function volgZetten(letters) {
+  if (!spel.basis) { spel.basis = letters.map(r => r.slice()); return; }   // wat er al lag bij het begin telt niet
+  const nieuw = [];
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (letters[r][c] && !spel.basis[r][c]) nieuw.push([r, c]);
+  if (!nieuw.length) { spel.kandidaat = null; return; }
+  // een geldige zet: alle nieuwe stenen op één lijn, zonder gaten, vast aan wat er lag (of over de ster bij de eerste zet),
+  // geen open joker, en alle nieuwe woorden bestaan
+  const rijen = new Set(nieuw.map(x => x[0])), kols = new Set(nieuw.map(x => x[1]));
+  if (rijen.size > 1 && kols.size > 1) { spel.kandidaat = null; return; }
+  const horiz = rijen.size === 1 && (kols.size > 1 || nieuw.length === 1);
+  const [r0, c0] = nieuw[0];
+  const posities = nieuw.map(([r, c]) => (horiz ? c : r));
+  for (let k = Math.min(...posities); k <= Math.max(...posities); k++) {
+    const [r, c] = horiz ? [r0, k] : [k, c0];
+    if (!letters[r][c]) { spel.kandidaat = null; return; }
+  }
+  if (nieuw.some(([r, c]) => letters[r][c] === "?")) { spel.kandidaat = null; return; }
+  const basisLeeg = spel.basis.every(r => r.every(x => !x));
+  const raakt = nieuw.some(([r, c]) => [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
+    .some(([a, b]) => a >= 0 && b >= 0 && a < N && b < N && spel.basis[a][b]));
+  if (basisLeeg ? !nieuw.some(([r, c]) => r === 7 && c === 7) : !raakt) { spel.kandidaat = null; return; }
+  const zet = puntenVoorZet(letters, nieuw);
+  const wb = window.woordenboek;
+  if (!zet.woorden.length || !wb || !wb.klaar() || zet.woorden.some(w => !wb.bestaat(w.woord))) { spel.kandidaat = null; return; }
+  const sleutel = nieuw.map(([r, c]) => `${r},${c}${letters[r][c]}`).join(" ");
+  if (!spel.kandidaat || spel.kandidaat.sleutel !== sleutel) { spel.kandidaat = { sleutel, keer: 1 }; return; }
+  if (++spel.kandidaat.keer < ZET_STABIEL) return;
+  // de zet is gelegd
+  spel.kandidaat = null;
+  const vorigeBasis = spel.basis.map(r => r.slice());
+  nieuw.forEach(([r, c]) => { spel.basis[r][c] = letters[r][c]; });
+  spel.zetten.push({ speler: spel.aanBeurt, ...zet, vorigeBasis });
+  const naam = spel.spelers[spel.aanBeurt];
+  spel.melding = { tekst: `${zet.woorden.map(w => w.woord).join(" + ")}: ${zet.punten} punten voor ${naam}${zet.bonus ? " (met 50 bonus)" : ""}`,
+                   tot: performance.now() + 6000 };
+  spel.aanBeurt = (spel.aanBeurt + 1) % spel.spelers.length;
+  if (navigator.vibrate) { try { navigator.vibrate(40); } catch (e) {} }
+}
+
+function stand(i) { return spel.zetten.filter(z => z.speler === i).reduce((s, z) => s + z.punten, 0); }
+
+function toonScores() {
+  const vak = $("scores");
+  vak.hidden = !st.vast;
+  const sleutel = spel.spelers.map((n, i) => `${n}:${stand(i)}`).join("|") + spel.aanBeurt;
+  if (vak.dataset.sleutel === sleutel) return;
+  vak.dataset.sleutel = sleutel;
+  vak.textContent = "";
+  spel.spelers.forEach((naam, i) => {
+    const b = document.createElement("button");
+    b.className = "speler" + (i === spel.aanBeurt ? " aan" : "");
+    b.innerHTML = `<span></span><b></b>`;
+    b.firstChild.textContent = naam; b.lastChild.textContent = stand(i);
+    b.title = "Tik: deze speler is aan de beurt";
+    b.addEventListener("click", () => { spel.aanBeurt = i; vak.dataset.sleutel = ""; toonScores(); });
+    vak.appendChild(b);
+  });
+  $("terug").disabled = !spel.zetten.length;
+}
+
+function zetTerug() {
+  const z = spel.zetten.pop();
+  if (!z) return;
+  spel.basis = z.vorigeBasis; spel.aanBeurt = z.speler; spel.kandidaat = null;
+  spel.melding = { tekst: `Zet teruggedraaid (${z.woorden.map(w => w.woord).join(" + ")})`, tot: performance.now() + 4000 };
+  zetStatus(spel.melding.tekst, "ok");
+  $("scores").dataset.sleutel = ""; toonScores();
 }
 
 // ---------------------------------------------------------------- jokers
@@ -642,6 +749,7 @@ function tekenRecht() {
 $("start").addEventListener("click", start);
 
 $("opnieuw").addEventListener("click", opnieuwZoeken);
+$("terug").addEventListener("click", zetTerug);
 $("ja").addEventListener("click", bevestig);
 $("nee").addEventListener("click", wijsAf);
 
@@ -674,6 +782,8 @@ over.addEventListener("pointerdown", e => {
 });
 
 // voor het testen: toestand opvragen, en één stilstaand beeld lezen (zonder stemmen)
+window.scrabbleSpel = () => ({ stand: spel.spelers.map((n, i) => stand(i)), aanBeurt: spel.aanBeurt,
+  zetten: spel.zetten.map(z => ({ speler: z.speler, woorden: z.woorden, bonus: z.bonus, punten: z.punten })) });
 window.scrabbleLees = () => st.lees && ({ letters: (st.lees.getoond || st.lees.letters).map(r => r.map(l => l || ".").join("")), woorden: st.lees.woorden.map(w => w.woord + (w.geldig === false ? "!" : "")) });
 window.scrabbleLeesBeeld = async (url, hoek) => {
   if (!st.cvKlaar) { await laadCv(); st.cvKlaar = true; }
