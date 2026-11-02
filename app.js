@@ -560,9 +560,10 @@ function volgBord(t) {
   // stilstaand: af en toe het raster opnieuw precies inpassen (houdt het kader recht op de lijnen)
   if (volg.passen !== false && t - volg.laatstGepast > PASSEN_MS) {
     volg.laatstGepast = t;
+    // (bij een heel schuin bord zijn de verste lijnen dun: 10 van de 16 lijnen volstaat, de sprong moet klein zijn)
     let r = vindRaster(grijs, st.hoek.map(([x, y]) => [x * s, y * s]), FIJN);
-    if (r.sc >= 12) r = vindRaster(grijs, r.h, HEEL_FIJN);
-    if (r.sc >= 12) {
+    if (r.sc >= 10) r = vindRaster(grijs, r.h, HEEL_FIJN);
+    if (r.sc >= 10) {
       const nh = r.h.map(([x, y]) => [x / s, y / s]);
       const verschil = Math.max(...nh.map((p, k) => Math.hypot(p[0] - st.hoek[k][0], p[1] - st.hoek[k][1]))) * s;
       if (verschil < 0.35 * vakMaat) { st.hoek = nh; gelukt = gelukt || !volg.vorig; volg.misPassen = 0; volg.goedGepast = t; }
@@ -570,7 +571,7 @@ function volgBord(t) {
     } else volg.misPassen++;
   }
   // het raster past al een tijd niet meer op de lijnen: we volgen iets anders dan het bord
-  if (volg.misPassen >= 4) { volg.misPassen = 0; grijs.delete(); volgStop(); return volgMislukt(t, "verloren"); }
+  if (volg.misPassen >= 6) { volg.misPassen = 0; grijs.delete(); volgStop(); return volgMislukt(t, "verloren"); }
   // nieuwe punten zoeken als er te weinig over zijn
   if (!volg.punten || volg.punten.rows < 60) {
     const m = bordMasker(st.hoek, s, grijs.size()), p = new cv.Mat();
@@ -655,7 +656,8 @@ function verwerkLezing(gelezen) {
   if (L.opwarmen) {
     // alles wat er in de eerste seconden verschijnt, lag er al: hoort bij het begin, telt niet als zet
     if (!spel.basis) spel.basis = letters.map(r => r.map(() => null));
-    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (letters[r][c] && letters[r][c] !== "?") spel.basis[r][c] = letters[r][c];
+    // alleen stenen die in een woord liggen (een losse "letter" is meestal een leesfout, bv. de ster)
+    for (const w of Lezer.woorden(letters)) for (const [r, c] of w.cellen) if (letters[r][c] !== "?") spel.basis[r][c] = letters[r][c];
     if (L.lezingen >= STEMMEN + RUSTIG + 2) L.opwarmen = false;
   } else if (L.lezingen >= STEMMEN) volgZetten(letters);
   toonScores();
@@ -721,27 +723,49 @@ function puntenVoorZet(letters, nieuw) {
   return { woorden: uit, bonus, punten: totaal + bonus };
 }
 
+// zelfde steen? een joker ("?" of kleine letter) telt als dezelfde als er ook een joker lag
+function zelfdeSteen(nu, toen) {
+  if (!nu || !toen) return false;
+  const joker = x => x === "?" || x !== x.toUpperCase();
+  if (joker(nu) || joker(toen)) return joker(nu) && joker(toen);
+  return nu === toen;
+}
+
 // Zitten we zeker goed op het bord? Raster kort geleden nog netjes op de lijnen, niet net verschoven of teruggevonden,
 // en (bijna) alle stenen die er al lagen worden nog op hun plaats gelezen. Anders tellen we niets.
 function bordBetrouwbaar(letters, behalve) {
   const t = performance.now();
-  if (volg.misPassen > 0 || t - volg.goedGepast > 2000 || t - volg.sprong > 0 && t - volg.sprong < 4000) return false;
+  if (volg.misPassen > 1 || t - volg.goedGepast > 3000 || t - volg.sprong > 0 && t - volg.sprong < 4000) return false;
   let mis = 0;
   for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
     if (!spel.basis[r][c] || (behalve && behalve.some(([a, b]) => a === r && b === c))) continue;
-    if (!letters[r][c] || letters[r][c].toUpperCase() !== spel.basis[r][c].toUpperCase()) mis++;
+    if (!zelfdeSteen(letters[r][c], spel.basis[r][c])) mis++;
   }
+  if (mis > 1) spel.misBasis = mis;
   return mis <= 1;
+}
+
+// Stenen in de basis die niet bij een gelegde zet horen (wat er bij de start lag) mogen bijgesteld worden als ze
+// lang en rustig anders gelezen worden: een leesfout bij de start blijft zo niet het hele spel hangen.
+function verbeterBasis(letters) {
+  if (!bordBetrouwbaar(letters)) return;
+  const uitZet = new Set(spel.zetten.flatMap(z => (z.nieuw || []).map(([r, c]) => r * N + c)));
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (uitZet.has(r * N + c) || st.lees.sinds[r][c] < 2 * RUSTIG) continue;
+    const nu = letters[r][c], toen = spel.basis[r][c];
+    // (weggevallen stenen laten we staan: als ze terug gelezen worden, mogen ze geen nieuwe zet lijken)
+    if (toen && nu && nu !== "?" && !zelfdeSteen(nu, toen)) spel.basis[r][c] = nu;
+  }
 }
 
 function volgZetten(letters) {
   if (!spel.basis) { spel.basis = letters.map(r => r.slice()); return; }   // wat er al lag bij het begin telt niet
   // De laatste zet aangepast (steen weggenomen of vervangen, zoals POR -> DOR)? Dan draaien we die zet terug;
   // de nieuwe stand wordt daarna gewoon opnieuw als zet van dezelfde speler geteld.
+  verbeterBasis(letters);
   const laatste = spel.zetten[spel.zetten.length - 1];
   if (laatste && laatste.nieuw && bordBetrouwbaar(letters, laatste.nieuw)) {
-    const veranderd = laatste.nieuw.some(([r, c]) => st.lees.sinds[r][c] >= RUSTIG &&
-      (!letters[r][c] || letters[r][c].toUpperCase() !== spel.basis[r][c].toUpperCase()));
+    const veranderd = laatste.nieuw.some(([r, c]) => st.lees.sinds[r][c] >= RUSTIG && !zelfdeSteen(letters[r][c], spel.basis[r][c]));
     if (veranderd) {
       spel.zetten.pop();
       spel.basis = laatste.vorigeBasis; spel.aanBeurt = laatste.speler; spel.kandidaat = null;
@@ -750,29 +774,69 @@ function volgZetten(letters) {
       return;
     }
   }
-  const nieuw = [];
-  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (letters[r][c] && !spel.basis[r][c]) nieuw.push([r, c]);
-  if (!nieuw.length) { spel.kandidaat = null; return; }
-  // een geldige zet: alle nieuwe stenen op één lijn, zonder gaten, vast aan wat er lag (of over de ster bij de eerste zet),
-  // geen open joker, en alle nieuwe woorden bestaan
-  const rijen = new Set(nieuw.map(x => x[0])), kols = new Set(nieuw.map(x => x[1]));
-  if (rijen.size > 1 && kols.size > 1) { spel.kandidaat = null; return; }
-  const horiz = rijen.size === 1 && (kols.size > 1 || nieuw.length === 1);
-  const [r0, c0] = nieuw[0];
-  const posities = nieuw.map(([r, c]) => (horiz ? c : r));
-  for (let k = Math.min(...posities); k <= Math.max(...posities); k++) {
-    const [r, c] = horiz ? [r0, k] : [k, c0];
-    if (!letters[r][c]) { spel.kandidaat = null; return; }
+  // Nieuwe stenen in groepjes per rij en per kolom; elk aaneengesloten stuk is een mogelijke zet. Een losse leesfout
+  // ergens anders stoort zo niet, en als een zet gemist werd (bv. hand in beeld) halen we hem daarna alsnog in.
+  const isNieuw = (r, c) => letters[r][c] && !spel.basis[r][c];
+  const opties = [];
+  for (const horiz of [true, false]) {
+    for (let i = 0; i < N; i++) {
+      let stuk = [], heeftNieuw = false;
+      for (let j = 0; j <= N; j++) {
+        const [r, c] = horiz ? [i, j] : [j, i];
+        if (j < N && letters[r][c]) { if (isNieuw(r, c)) stuk.push([r, c]); continue; }
+        if (stuk.length) opties.push(stuk);
+        stuk = [];
+      }
+    }
   }
-  if (nieuw.some(([r, c]) => letters[r][c] === "?")) { spel.kandidaat = null; return; }
-  if (nieuw.length > 7 || !bordBetrouwbaar(letters)) { spel.kandidaat = null; return; }
-  const basisLeeg = spel.basis.every(r => r.every(x => !x));
-  const raakt = nieuw.some(([r, c]) => [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
-    .some(([a, b]) => a >= 0 && b >= 0 && a < N && b < N && spel.basis[a][b]));
-  if (basisLeeg ? !nieuw.some(([r, c]) => r === 7 && c === 7) : !raakt) { spel.kandidaat = null; return; }
-  const zet = puntenVoorZet(letters, nieuw);
+  if (!opties.length) { spel.kandidaat = null; spel.waarom = "niets nieuw"; return; }
   const wb = window.woordenboek;
-  if (!zet.woorden.length || !wb || !wb.klaar() || zet.woorden.some(w => !wb.bestaat(w.woord))) { spel.kandidaat = null; return; }
+  if (!wb || !wb.klaar()) return;
+  const basisLeeg = spel.basis.every(r => r.every(x => !x));
+  const geldig = [];
+  for (const stuk of opties) {
+    if (stuk.length > 7 || stuk.some(([r, c]) => letters[r][c] === "?")) continue;
+    // het bord zoals het zou zijn met alleen deze zet erbij
+    const bord = spel.basis.map(r => r.slice());
+    stuk.forEach(([r, c]) => { bord[r][c] = letters[r][c]; });
+    // aaneengesloten (gaten moeten al gevuld zijn met stenen die er lagen)
+    const rijen = new Set(stuk.map(x => x[0])), horiz = rijen.size === 1;
+    const pos = stuk.map(([r, c]) => (horiz ? c : r)), [r0, c0] = stuk[0];
+    let gat = false;
+    for (let k = Math.min(...pos); k <= Math.max(...pos); k++) { const [r, c] = horiz ? [r0, k] : [k, c0]; if (!bord[r][c]) gat = true; }
+    if (gat) continue;
+    const raakt = stuk.some(([r, c]) => [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]]
+      .some(([a, b]) => a >= 0 && b >= 0 && a < N && b < N && spel.basis[a][b]));
+    if (basisLeeg ? !stuk.some(([r, c]) => r === 7 && c === 7) : !raakt) continue;
+    const zet = puntenVoorZet(bord, stuk);
+    if (!zet.woorden.length || zet.woorden.some(w => !wb.bestaat(w.woord))) continue;
+    geldig.push({ stuk, zet });
+  }
+  if (!geldig.length) { spel.kandidaat = null; spel.waarom = "geen geldige zet"; return; }
+  // niet betrouwbaar: even wachten (de teller blijft staan), niet van voor af aan beginnen
+  if (!bordBetrouwbaar(letters)) { spel.waarom = "raster niet betrouwbaar"; return; }
+  spel.waarom = "";
+  geldig.sort((a, b) => b.stuk.length - a.stuk.length);
+  const { stuk: nieuw, zet } = geldig[0];
+  // twijfelt de lezer nog over een vakje in het verlengde van de zet (bv. een verre letter die nog niet zeker is),
+  // even wachten: anders tellen we STEEN terwijl er DAMSTEEN ligt. Hoogstens 3 s.
+  const twijfel = (r, c) => r >= 0 && c >= 0 && r < N && c < N && !letters[r][c] && st.lees.stemmen[r][c].filter(Boolean).length >= 2;
+  const zetHoriz = new Set(nieuw.map(x => x[0])).size === 1 && nieuw.length > 1 ? true
+    : nieuw.length > 1 ? false : null;
+  const verlengde = [];
+  for (const horiz of zetHoriz === null ? [true, false] : [zetHoriz]) {
+    const pos = nieuw.map(([r, c]) => (horiz ? c : r)), [r0, c0] = nieuw[0];
+    // tot aan de eerste lege plek voorbij de woorden aan beide kanten, plus 2
+    let lo = Math.min(...pos), hi = Math.max(...pos);
+    while (lo > 0 && letters[horiz ? r0 : lo - 1][horiz ? lo - 1 : c0]) lo--;
+    while (hi < N - 1 && letters[horiz ? r0 : hi + 1][horiz ? hi + 1 : c0]) hi++;
+    for (let k = lo - 2; k <= hi + 2; k++) verlengde.push(horiz ? [r0, k] : [k, c0]);
+  }
+  const wacht = verlengde.some(([r, c]) => twijfel(r, c));
+  const sleutel0 = nieuw.map(([r, c]) => `${r},${c}${letters[r][c]}`).join(" ");
+  if (wacht && spel.kandidaat && spel.kandidaat.sleutel === sleutel0 && (spel.kandidaat.wacht = (spel.kandidaat.wacht || 0) + 1) <= 6) {
+    spel.waarom = "twijfel in het verlengde"; return;
+  }
   const sleutel = nieuw.map(([r, c]) => `${r},${c}${letters[r][c]}`).join(" ");
   if (!spel.kandidaat || spel.kandidaat.sleutel !== sleutel) { spel.kandidaat = { sleutel, keer: 1 }; return; }
   if (++spel.kandidaat.keer < ZET_STABIEL) return;
@@ -1134,4 +1198,4 @@ window.scrabbleLeesBeeld = async (url, hoek) => {
   return { ms: Math.round(performance.now() - t0), letters: g.map(r => r.map(x => (x && x.p >= 0.6 ? x.letter : ".")).join("")) };
 };
 // voor het testen: toestand opvragen
-window.scrabbleToestand = () => ({ status: $("status").textContent, hoek: st.hoek, stabiel: st.stabiel, score: st.score, vast: st.vast, vraagt: st.vraagt, afgewezen: st.afgewezen.length });
+window.scrabbleToestand = () => ({ volg: { mis: volg.misPassen, sindsGepast: Math.round(performance.now() - volg.goedGepast), sindsSprong: Math.round(performance.now() - volg.sprong), kwijt: volg.kwijt, stap: +volg.stap.toFixed(2) }, kandidaat: spel.kandidaat, waarom: spel.waarom, status: $("status").textContent, hoek: st.hoek, stabiel: st.stabiel, score: st.score, vast: st.vast, vraagt: st.vraagt, afgewezen: st.afgewezen.length });
